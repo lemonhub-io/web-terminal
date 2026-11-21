@@ -1,151 +1,225 @@
 # web-terminal
 
-A browser terminal you can run on your own machine. It gives you real login
-shells behind one password, with tabs that survive a closed browser, a key bar
-for phones (Esc, Tab, Ctrl, Alt and arrows), and reconnects by itself after a
-network drop.
-
-It is a single small Node server, a plain TypeScript client on
-[xterm.js](https://xtermjs.org/), and nothing else.
-
-## What it gets right
-
-- **Symbols and full-screen programs.** A code font ships with the page, with
-  fallbacks for the marks most fonts leave out and for Nerd Font icons, so
-  nothing depends on what the visitor has installed. Box drawing, blocks and
-  powerline shapes are drawn rather than taken from a font, so they join up.
-  Character widths follow Unicode 11, which is what tmux and most programs
-  assume.
-- **Reconnecting.** The server keeps its own copy of every screen. A browser
-  that attaches later gets a clean snapshot (screen, scrollback, cursor, and
-  modes such as the alternate screen and mouse reporting), not a replay of raw
-  bytes, so vim, tmux and the like come back exactly as they were.
-- **Light and dark.** Every theme keeps black dark and white light, and the
-  terminal lifts any text that would be hard to read against its background.
-  Programs written for dark terminals stay readable on a light one. Programs
-  that ask are told which it is: `COLORFGBG`, the OSC 10/11 color queries, and
-  mode 2031 (told again when the theme changes).
-- **Your own look.** Eleven themes with a follow-the-system option, import of
-  any color scheme in Windows Terminal's JSON format, four bundled fonts or any
-  font installed on the device, size, line height and cursor. Settings stay in
-  the browser.
-- **Keys.** Ctrl+V pastes; Ctrl+C copies when text is selected and interrupts
-  otherwise; Shift+Enter sends a line break to programs that take one; programs
-  can copy to the clipboard with OSC 52 (never read it).
-- **Text selection.** Drag to select terminal text, including in full-screen
-  programs with mouse tracking. On touch screens, hold a word or tap Select text,
-  then drag to select or adjust the handles. Tap Copy to copy the selection.
-- **Phones.** Swipe through shell history and full-screen programs, with
-  momentum after lifting your finger. A key bar with Esc, Tab, Ctrl, Alt,
-  arrows and Paste, a layout that stays above the on-screen keyboard, and it
-  installs as an app.
-
-## Requirements
-
-- Node.js 24 or newer
-- A C/C++ toolchain for `node-pty` (`build-essential` on Debian/Ubuntu, Xcode
-  command line tools on macOS)
-- A reverse proxy that serves HTTPS, such as Caddy (see `deploy/`)
+Run real login shells in a browser, with persistent tabs, automatic reconnect,
+and a key bar for phones. The client uses TypeScript and
+[xterm.js](https://xtermjs.org/). A Node.js web service handles sign-in and
+serves the client. A separate shell host owns the terminals and their
+scrollback so they can outlive the browser and web service.
 
 ## Quick start
 
+You need Node.js 24 or later, a C/C++ toolchain for `node-pty` (such as
+`build-essential` on Debian or Ubuntu), and an HTTPS reverse proxy such as
+Caddy.
+
 ```sh
+git clone https://github.com/lemonhub-io/web-terminal.git
+cd web-terminal
 npm ci
-npm run build          # bundles the client into client/dist
-npm run passwd         # adds or updates an account (interactive)
-npm start              # listens on http://127.0.0.1:3120
+npm run build
+npm run passwd
+npm start
 ```
 
-For non-interactive setup, pipe the password on stdin and pass the name:
+Point your proxy at `127.0.0.1:3120` and sign in at the proxy’s HTTPS address.
+Use [the example Caddyfile](deploy/Caddyfile.example) and replace the hostname
+with your domain. `npm run passwd` adds an account or updates its password.
+For a non-interactive setup, supply the password on standard input.
 
 ```sh
 printf '%s\n' "$PASSWORD" | WEB_TERMINAL_USERNAME=alice npm run passwd
 ```
 
-Open the address through your HTTPS proxy and sign in. The server only listens
-on loopback, so it is never reachable directly from the network.
+## Using the terminal
 
-## Deploying
+### Tabs and sign-in
 
-- The shells live in their own process, the shell host, and the web server
-  (sign-in, API, client) talks to it over a private Unix socket in the data
-  directory. `deploy/web-terminal-host.service` and `deploy/web-terminal.service`
-  are the two systemd user units. Copy both to `~/.config/systemd/user/`, fix
-  the Node path, then `systemctl --user enable --now web-terminal-host web-terminal`.
-  If you set `WEB_TERMINAL_DATA` or `WEB_TERMINAL_MAX`, set them in both.
-- Restarting `web-terminal` never ends a shell: browsers reconnect and get the
-  screen back. After `npm run build`, `systemctl --user reload web-terminal`
-  serves the new client without even that. Only restarting the host ends the
-  shells, and an update needs that only when `server/terminal.ts` or
-  `server/host.ts` changed.
-- Without the host unit (or with plain `npm start`), the web server starts a
-  host itself, and the shells end whenever the web server does.
-- Keep `OOMPolicy=continue` from the example units: without it, one program
-  killed for memory stops the service and every shell with it.
-- `deploy/Caddyfile.example` shows the proxy block. Caddy obtains the
-  certificate and sets `X-Forwarded-For`.
+- Choose **+** to open a terminal. When signed in to several accounts, choose
+  which one should launch the shell. Double-click a tab to rename it. Its
+  close button asks for confirmation before ending the shell.
+- Use **Settings** → **Sign in to another account** to sign in to up to eight
+  accounts in one browser. The tab strip shows the terminals from those
+  accounts together.
+- Each fresh sign-in gets its own terminal list, even when several people use
+  the same account. Browser tabs that share the same session cookie see the
+  same shells. Reloading, reconnecting, or reopening the browser with that
+  cookie restores the terminal screen, scrollback, cursor, and program modes.
+- Signing out clears the corresponding login from the browser. The next
+  sign-in starts a fresh terminal list. Existing shells keep running until
+  they exit or the shell host stops. Close shells before signing out when
+  you want to end them.
 
-## Settings
+### Text selection and clipboard
 
-| Variable | Default | Meaning |
+- **Mouse:** Drag to select text, including in programs with mouse tracking
+  such as tmux. A plain click and the wheel still reach the program.
+  Use the copy button or your usual clipboard shortcut.
+- **Touch:** Hold a word briefly to select it, or tap **Select text** in the
+  toolbar and drag across the text. After lifting your finger, drag either
+  handle to adjust the range. Hold a handle near the edge of the screen to
+  extend into available scrollback.
+- **Copy:** Tap **Copy** beside the touch selection. When clipboard access is
+  unavailable, the same toolbar opens a selectable text box for the device’s
+  copy menu. Tap **Done** to return to normal terminal input and swiping.
+- **Keyboard:** On Windows and Linux, Ctrl+C copies a selection and sends an
+  interrupt when no text is selected. Ctrl+Shift+C copies. Ctrl+V pastes.
+  On macOS, use Command+C and Command+V. Shift+Enter sends a line break to
+  programs that support it. Applications can write to the clipboard with
+  OSC 52. Clipboard contents are available to the terminal through user paste.
+
+### Display and phone controls
+
+The terminal supports light and dark themes, Windows Terminal JSON theme
+imports, four bundled code fonts, and locally installed fonts. Font size,
+line height, cursor, theme, and key bar preferences stay in the browser.
+Bundled fallback fonts cover symbols and Nerd Font icons. Unicode 11 cell
+widths match on the client and host, including when restoring a screen.
+The palettes keep ANSI black dark and white light. Applications can use
+`COLORFGBG`, OSC 10/11 color queries, and mode 2031 for theme information.
+
+On a phone, swipe to scroll history or navigate full-screen programs. The key
+bar adds Esc, Tab, Ctrl, Alt, arrows, and Paste. The layout follows the
+visible screen when the keyboard opens. Browsers that support web app
+installation can add the terminal to the home screen.
+
+## Deployment
+
+### Services and proxy
+
+For a persistent deployment on Linux, start with a built checkout and a
+configured account. Stop any foreground instance and install both example
+systemd user units. Set their working directories to this checkout and their
+`ExecStart` paths to the absolute path of Node.js 24 or later.
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp deploy/web-terminal*.service ~/.config/systemd/user/
+# Edit the copied units if your checkout or Node path differs.
+systemctl --user daemon-reload
+systemctl --user enable --now web-terminal-host web-terminal
+```
+
+`web-terminal` serves the client and API. It relays terminal WebSockets to
+`web-terminal-host` over the private `host.sock` Unix socket. With a plain
+`npm start`, the web service starts a host if one is missing. Use the separate
+units to keep host lifetime independent of web service restarts.
+
+Keep `OOMPolicy=continue` in the units so other shells can keep running after
+an out-of-memory kill in one shell. Serve the proxy over HTTPS and keep the
+web service bound to loopback. The Caddy example forwards WebSockets and
+supplies the client address for sign-in throttling.
+
+### Client builds from GitHub Actions
+
+The [Build workflow](https://github.com/lemonhub-io/web-terminal/actions/workflows/build.yml)
+runs on pushes to `main`, pull requests, and manual dispatch. It builds the
+client from the lockfile and checks touch selection, handle dragging, and
+both clipboard paths in Chromium. The `web-terminal-client` artifact
+contains the contents of `client/dist/`. Use an artifact from a successful
+run for the revision you are deploying.
+
+From the checkout on the server, replace `RUN_ID` with that run’s ID. An
+authenticated GitHub CLI extracts the named artifact into the staging directory.
+[GitHub CLI reference](https://cli.github.com/manual/gh_run_download)
+
+```sh
+(
+  set -e
+  mkdir -p var
+  staging=$(mktemp -d var/client-release.XXXXXX)
+  gh run download RUN_ID --repo lemonhub-io/web-terminal \
+    --name web-terminal-client --dir "$staging"
+  test -s "$staging/index.html"
+  if [ -d client/dist ]; then
+    backup=$(mktemp -d var/client-backup.XXXXXX)
+    mv client/dist "$backup/dist"
+  fi
+  mv "$staging" client/dist
+  systemctl --user reload web-terminal
+)
+```
+
+The workflow publishes a build artifact. The deployment server installs it
+and reloads its own service. Install the regular runtime dependencies with
+`npm ci` when setting up the server or updating its dependency lockfile.
+
+### What to reload or restart
+
+| Change | Service action | Effect |
 |---|---|---|
-| `WEB_TERMINAL_PORT` | `3120` | Loopback port to listen on |
-| `WEB_TERMINAL_MAX` | `8` | How many terminals can be open at once |
-| `WEB_TERMINAL_DATA` | `var/` in the repo | Where the account and the session key are kept |
+| Client assets | `systemctl --user reload web-terminal` | Serves the new client to browsers on their next page load |
+| Web server code | `systemctl --user restart web-terminal` | Browsers reconnect to the running shells |
+| Shell host code or configuration | `systemctl --user restart web-terminal-host` | Ends every shell owned by the host |
 
-Shells start as login shells of `$SHELL` in the home directory, with
-`TERM=xterm-256color` and a UTF-8 locale (`C.UTF-8` if the service has none).
+When upgrading from versions that used account-wide terminal tabs, save work
+and close old tabs before deploying. The upgraded app starts with a
+session-scoped terminal list. Legacy shells in an existing host remain
+running until they exit or the host stops.
 
-## Security notes
+## Configuration and security
 
-- A shell here runs as the account that starts the server, with that account's
-  permissions. If that account can use `sudo` without a password, anyone who
-  signs in can too. Run it as an unprivileged user.
-- Accounts with scrypt-hashed passwords, and an HMAC-signed `Secure` session
-  cookie that lasts 90 days. A browser can be signed in to several accounts at
-  once (Settings, Sign in to another account). Each sign-in has its own terminals,
-  even across browsers using the same account. Reloading or reconnecting with
-  the same session restores them. Signing out or losing that session starts a
-  fresh terminal list on the next sign-in. Changing an account's password signs
-  that account out everywhere.
-- An account can be tied to a system user (`npm run passwd` asks). Its shells
-  then start as that user through `sudo -n`, so the service account needs
-  passwordless sudo for it.
-- Login is throttled per client address, with lockouts that double after five
-  failures. The address is the last `X-Forwarded-For` hop when the peer is
-  loopback, so only run it behind a proxy you control.
-- Mutating API calls and WebSockets must come from the same origin.
-- Responses carry a strict Content-Security-Policy and framing is denied.
+| Variable | Default | Purpose |
+|---|---|---|
+| `WEB_TERMINAL_PORT` | `3120` | Loopback HTTP port for the web service |
+| `WEB_TERMINAL_MAX` | `8` | Maximum concurrent terminals per signed-in account session, enforced by the shell host |
+| `WEB_TERMINAL_DATA` | `var/` in the checkout | Directory for the private socket and the `secrets/` directory |
+| `WEB_TERMINAL_USERNAME` | Prompted interactively | Account name for `npm run passwd` |
+| `WEB_TERMINAL_SYSTEM_USER` | Prompted interactively | Optional operating-system user for that account |
 
-Treat the password as a root-equivalent secret if your shell account is
-privileged, and consider putting an access layer (for example, IP allow-lists or
-a VPN) in front of it.
+For a custom data directory, use the same absolute path for both services
+and for `npm run passwd`. Keep the directory private to the service user.
+The `secrets/` directory contains the account database and the session
+signing key. If you change the web port, update the proxy target to match.
+
+By default, shells run as the service user and start in its home directory
+using `$SHELL` or `/bin/bash`. They use `TERM=xterm-256color` and a UTF-8
+locale. On Linux, `npm run passwd` can bind an account to another system
+user. The host looks up the user with `getent` and starts its login shell
+with `sudo -n` when it differs from the service user. The service user needs
+the corresponding passwordless sudo permission. Filesystem and process
+access follow the permissions of the account’s operating-system user.
+
+Passwords are stored as scrypt hashes. Each account token is signed and
+stored in a Secure, HttpOnly cookie with a rolling 90-day lifetime. Changing
+a password invalidates that account’s tokens on subsequent API requests and
+WebSocket handshakes. An open WebSocket keeps the authorization it received
+when it connected until the connection closes.
+
+Login failures are throttled per client address. Behind a loopback proxy the
+server uses the last entry in `X-Forwarded-For`, so run it behind a proxy you
+control. API writes and WebSocket handshakes validate the origin, and the
+page uses Content Security Policy and blocks framing. Run shells with the
+least operating-system privilege needed for their work.
 
 ## Development
 
 ```sh
-npm run check          # type-check the server and the client
-npm test               # server unit tests
-npm run build          # rebuild the client after editing client/
+npm run check             # Type-check the server and client
+npm test                  # Run server unit tests
+npm run build             # Rebuild client/dist
+node tools/test-selection.mjs  # Check the built client with ChromeDriver
 ```
 
-Layout:
+On this project’s deployment server, use the GitHub Actions artifact for the
+client build and keep local checks focused on the affected code. The browser
+check runs against an isolated fixture on the Actions runner and uses Chrome
+and the matching ChromeDriver.
 
-```
-server/   HTTP API, WebSocket attach, shells, auth, static assets
-client/   browser app (xterm.js, tabs, themes, settings, key bar)
-deploy/   systemd unit and Caddy example
-tools/    how the bundled fallback fonts were made
-```
+| Path | Contents |
+|---|---|
+| `client/` | xterm.js browser UI, tabs, themes, settings, clipboard, and touch input |
+| `server/` | Authentication, HTTP and WebSocket API, shell host, and server tests |
+| `deploy/` | Example systemd user units and Caddy configuration |
+| `tools/` | Browser check and fallback font generation |
+| `.github/workflows/build.yml` | Client build, browser check, and artifact upload |
 
-## Fonts
+## Fonts and license
 
-The code fonts come from [Fontsource](https://fontsource.org/) (JetBrains Mono,
-Fira Code, Cascadia Code, IBM Plex Mono; SIL Open Font License). `client/fonts/`
-holds two fallbacks built by `tools/subset-fonts.py`: symbols from
-[JuliaMono](https://juliamono.netlify.app/) and icons from
-[Nerd Fonts](https://www.nerdfonts.com/). Their licenses sit next to them.
+The bundled code fonts are JetBrains Mono, Fira Code, Cascadia Code, and
+IBM Plex Mono from [Fontsource](https://fontsource.org/), under the SIL Open
+Font License. `client/fonts/` holds symbol and icon subsets built by
+`tools/subset-fonts.py` from [JuliaMono](https://juliamono.netlify.app/) and
+[Nerd Fonts](https://www.nerdfonts.com/). Their licenses are included
+alongside the files.
 
-## License
-
-MIT. See [LICENSE](LICENSE).
+The project is [MIT licensed](LICENSE).
