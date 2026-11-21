@@ -153,6 +153,7 @@ export class TouchSelection {
       this.finishDrag();
     };
     const handle = h("span", { class: `touch-handle ${edge}`, attrs: { "aria-hidden": "true" } });
+    handle.hidden = true;
     handle.addEventListener("pointerdown", (event) => {
       const range = this.currentRange();
       if (!range || !event.isPrimary || event.button !== 0) return;

@@ -83,8 +83,13 @@ try {
   const y = top + height / size.rows / 2;
   const touch = (type, point) => send("Input.dispatchTouchEvent", { type, touchPoints: point ? [{ ...point, id: 1 }] : [] });
   const center = async (selector) => evaluate(`(() => {
-    const { x, y, width, height } = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
-    return { x: x + width / 2, y: y + height / 2 };
+    const element = document.querySelector(${JSON.stringify(selector)});
+    const { x, y, width, height } = element.getBoundingClientRect();
+    const point = { x: x + width / 2, y: y + height / 2 };
+    if (!width || !height || !element.contains(document.elementFromPoint(point.x, point.y))) {
+      throw new Error("Touch target is not visible: " + ${JSON.stringify(selector)});
+    }
+    return point;
   })()`);
   const tap = async (selector) => {
     await touch("touchStart", await center(selector));
@@ -110,11 +115,13 @@ try {
   };
 
   await touch("touchStart", { x: x(4.5), y });
-  await waitFor(() => evaluate('Boolean(document.querySelector(".touch-handle.end:not([hidden])"))'), "Touch hold did not show selection handles");
+  const endHandle = ".touch-selection:not([hidden]) .touch-handle.end:not([hidden])";
+  await waitFor(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(endHandle)})?.getBoundingClientRect().width)`),
+    "Touch hold did not show selection handles");
   await touch("touchEnd");
   await copyText(text);
 
-  const handle = await center(".touch-handle.end");
+  const handle = await center(endHandle);
   await touch("touchStart", handle);
   await touch("touchMove", { x: handle.x + x(line.length) - x(text.length), y: handle.y });
   await touch("touchEnd");
