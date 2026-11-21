@@ -23,10 +23,10 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
-      - name: Check terminal text selection
-        run: node tools/test-selection.mjs
       - uses: actions/upload-artifact@v7
         with:
           name: web-terminal-client
           path: client/dist/
           if-no-files-found: error
+      - name: Check terminal text selection
+        run: node tools/test-selection.mjs

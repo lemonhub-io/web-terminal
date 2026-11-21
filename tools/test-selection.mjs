@@ -1,12 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { WebSocket, WebSocketServer } from "ws";
+import { WebSocketServer } from "ws";
 import { Assets } from "../server/assets.ts";
 
 const text = "SELECTIONCHECK";
@@ -46,41 +43,28 @@ async function waitFor(read, message) {
   throw new Error(message);
 }
 
-const profile = mkdtempSync(path.join(tmpdir(), "wt-chrome-"));
-const chrome = spawn(process.env.CHROME ?? "google-chrome", [
-  "--headless", "--no-sandbox", "--no-first-run", "--lang=en-US",
-  "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
-  "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank",
-], { stdio: "ignore" });
-let debuggerSocket;
+const driver = spawn("chromedriver", ["--port=9515"], { stdio: "ignore" });
+let sessionId;
+async function driverRequest(route, body, method = body ? "POST" : "GET") {
+  const response = await fetch(`http://127.0.0.1:9515${route}`, {
+    method,
+    ...(body && { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+  });
+  const { value } = await response.json();
+  if (!response.ok) throw new Error(value?.message ?? `ChromeDriver returned ${response.status}`);
+  return value;
+}
+
 try {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const target = await waitFor(async () => {
-    try {
-      const port = readFileSync(path.join(profile, "DevToolsActivePort"), "utf8").split("\n")[0];
-      const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-      return pages.find((page) => page.type === "page")?.webSocketDebuggerUrl;
-    } catch {
-      return undefined;
-    }
-  }, "Chrome did not start");
-  debuggerSocket = new WebSocket(target);
-  await once(debuggerSocket, "open");
-  let requestId = 0;
-  const send = (method, params = {}) => new Promise((resolve, reject) => {
-    const request = ++requestId;
-    const receive = (raw) => {
-      const reply = JSON.parse(raw.toString());
-      if (reply.id !== request) return;
-      debuggerSocket.off("message", receive);
-      if (reply.error) reject(new Error(reply.error.message));
-      else resolve(reply.result);
-    };
-    debuggerSocket.on("message", receive);
-    debuggerSocket.send(JSON.stringify({ id: request, method, params }));
-  });
+  await waitFor(() => driverRequest("/status").then((state) => state.ready).catch(() => false), "ChromeDriver did not start");
+  ({ sessionId } = await driverRequest("/session", { capabilities: { alwaysMatch: {
+    browserName: "chrome",
+    "goog:chromeOptions": { args: ["--headless", "--no-sandbox", "--disable-dev-shm-usage", "--lang=en-US"] },
+  } } }));
+  const send = (cmd, params = {}) => driverRequest(`/session/${sessionId}/goog/cdp/execute`, { cmd, params });
   const evaluate = async (expression) => {
     const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
@@ -130,11 +114,8 @@ try {
   assert.equal(writes.length, 2, "Touch selection sent mouse reports to the program");
   console.log("Mouse drag and touch hold copied terminal text with mouse tracking enabled");
 } finally {
-  debuggerSocket?.terminate();
-  const exited = once(chrome, "exit");
-  chrome.kill();
-  if (chrome.exitCode === null) await exited;
-  rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
+  if (sessionId) await driverRequest(`/session/${sessionId}`, undefined, "DELETE").catch(() => {});
+  driver.kill();
   for (const socket of sockets.clients) socket.terminate();
   sockets.close();
   server.close();
