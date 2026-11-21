@@ -25,6 +25,16 @@ const server = createServer(async (req, res) => {
     res.setHeader("Content-Type", "application/json");
     return res.end(JSON.stringify([{ id, account: "test", workspace: selected.id, title: selected.name, name: "", created: 0, clients: 1 }]));
   }
+  if (url.pathname === "/api/files") {
+    const account = url.searchParams.get("account");
+    const home = "/home/test";
+    const path = url.searchParams.get("path") ?? home;
+    if (account !== "test" || ![home, home + "/Reports"].includes(path)) return res.writeHead(404).end();
+    const entries = path === home
+      ? [{ name: "Reports", kind: "directory", size: 0, link: false, modified: 0 }]
+      : [{ name: "report.txt", kind: "file", size: 12, link: false, modified: 0 }];
+    return res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ home, path, entries }));
+  }
   const file = assets.response(req.url ?? "/");
   res.writeHead(file.status, Object.fromEntries(file.headers));
   res.end(Buffer.from(await file.arrayBuffer()));
@@ -147,7 +157,16 @@ try {
   const manual = 'document.querySelector(".touch-actions textarea:not([hidden])")';
   assert.equal(await evaluate(`${manual}?.value`), line, "Manual copy lost the selected text");
   assert.deepEqual(writes, [], "Touch selection sent mouse reports to the program");
-  console.log("Phone touch hold, selection handle, Copy and manual copy passed with mouse tracking enabled");
+
+  await tap('button[aria-label="Files"]');
+  const folder = '.file-entry[title="Reports"]';
+  await waitFor(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(folder)}))`), "File manager did not open the account's home folder");
+  await tap(folder);
+  const report = '.file-entry[title="report.txt"]';
+  const download = await waitFor(() => evaluate(`document.querySelector(${JSON.stringify(report)})?.getAttribute("href")`), "Opening Reports did not show its file");
+  const parameters = new URL(download, origin).searchParams;
+  assert.deepEqual(Object.fromEntries(parameters), { account: "test", path: "/home/test/Reports", name: "report.txt" });
+  console.log("Session switching, touch selection, and file navigation passed in the phone browser");
 } finally {
   if (sessionId) await driverRequest(`/session/${sessionId}`, undefined, "DELETE").catch(() => {});
   driver.kill();

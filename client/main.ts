@@ -19,6 +19,7 @@ import "./style.css";
 import type { Activity } from "./activity.ts";
 import { afterPointer, h, icon, onTap, recall, reconcile, remember } from "./dom.ts";
 import { language, t } from "./i18n.ts";
+import { buildFilesPanel } from "./files.ts";
 import { applyModifiers, buildKeyBar } from "./keys.ts";
 import { activeTheme, buildPanel, fontFamily, onSettingsChange, settings } from "./settings.ts";
 import { fontsReady, Shell, type ShellHost } from "./shell.ts";
@@ -99,6 +100,8 @@ let chooseEl: HTMLElement;
 let choicesEl: HTMLElement;
 let workspacePanel: ReturnType<typeof buildWorkspacePanel>;
 let workspaceButton: HTMLButtonElement;
+let filePanel: ReturnType<typeof buildFilesPanel>;
+let fileButton: HTMLButtonElement;
 let statusEl: HTMLElement;
 let copyButton: HTMLButtonElement;
 let touchSelectButton: HTMLButtonElement;
@@ -109,11 +112,12 @@ let openButton: HTMLButtonElement;
 // ------------------------------------------------------------ helpers
 
 /** Calls the same-origin API. Failures carry the server's own message. */
-async function api<T>(route: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+async function api<T>(route: string, init: { method?: string; body?: unknown; upload?: File; signal?: AbortSignal } = {}): Promise<T> {
   const res = await fetch(`/api/${route}`, {
     method: init.method ?? "GET",
     headers: init.body === undefined ? {} : { "Content-Type": "application/json" },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    body: init.upload ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
+    signal: init.signal,
     credentials: "same-origin",
     cache: "no-store",
   });
@@ -138,7 +142,7 @@ function paintChrome() {
 }
 
 function showKeys() {
-  if (keysEl) keysEl.hidden = !workspacePanel?.element.hidden || !(settings.keyBar === "on" || (settings.keyBar === "auto" && coarse.matches));
+  if (keysEl) keysEl.hidden = !workspacePanel.element.hidden || !filePanel.element.hidden || !(settings.keyBar === "on" || (settings.keyBar === "auto" && coarse.matches));
 }
 
 /** Shows a short message where the connection state sits, then lets it go. */
@@ -164,7 +168,7 @@ function paintStatus() {
 
 function paintSelection() {
   if (!consoleEl) return;
-  const shell = chooseEl.hidden && workspacePanel.element.hidden ? current() : undefined;
+  const shell = chooseEl.hidden && workspacePanel.element.hidden && filePanel.element.hidden ? current() : undefined;
   touchSelectButton.hidden = !shell;
   touchSelectButton.setAttribute("aria-pressed", String(!!shell?.touchSelectionActive));
   copyButton.hidden = !shell?.term.hasSelection() || shell.touchSelectionActive;
@@ -180,6 +184,7 @@ function handleError(error: unknown) {
 
 function showLogin(message = "") {
   panelEvents?.abort();
+  filePanel?.dispose();
   panelEvents = null;
   accounts = [];
   logins = [];
@@ -380,6 +385,7 @@ const host: ShellHost = {
 
 async function showConsole(me: SessionInfo) {
   panelEvents?.abort();
+  filePanel?.dispose();
   panelEvents = new AbortController();
   readSession(me);
   tabViews.clear();
@@ -432,7 +438,8 @@ async function showConsole(me: SessionInfo) {
     },
     close: closeWorkspacePanel,
   });
-  stageEl = h("div", { class: "stage" }, emptyEl, chooseEl, workspacePanel.element);
+  filePanel = buildFilesPanel({ request: api, close: closeFilePanel, unauthorized: () => showLogin(t("signInAgain")) });
+  stageEl = h("div", { class: "stage" }, emptyEl, chooseEl, workspacePanel.element, filePanel.element);
   statusEl = h("span", { class: "status", attrs: { role: "status" } }, h("i", { class: "dot" }), h("span", {}));
   keysEl = buildKeyBar({
     send: (data) => current()?.key(data),
@@ -443,7 +450,7 @@ async function showConsole(me: SessionInfo) {
 
   const close = () => {
     panel.close();
-    if (workspacePanel.element.hidden) current()?.focus();
+    if (workspacePanel.element.hidden && filePanel.element.hidden) current()?.focus();
   };
   const built = buildPanel(
     {
@@ -480,7 +487,10 @@ async function showConsole(me: SessionInfo) {
     {
       class: "tool",
       attrs: { type: "button", "aria-label": t("settings"), title: t("settings") },
-      on: { click: () => panel.showModal() },
+      on: { click: () => {
+        if (!filePanel.element.hidden) closeFilePanel();
+        panel.showModal();
+      } },
     },
     icon("sliders"),
   );
@@ -501,10 +511,14 @@ async function showConsole(me: SessionInfo) {
   }, icon("sessions"));
   workspaceButton.hidden = !logins.length;
   onTap(workspaceButton, toggleWorkspacePanel);
+  fileButton = h("button", {
+    class: "tool", attrs: { type: "button", "aria-label": t("files"), title: t("files"), "aria-expanded": "false" },
+  }, icon("folder"));
+  onTap(fileButton, toggleFilePanel);
   const root = h(
     "div",
     { class: "app" },
-    h("header", { class: "strip" }, tabsEl, statusEl, copyButton, touchSelectButton, workspaceButton, settingsButton),
+    h("header", { class: "strip" }, tabsEl, statusEl, copyButton, touchSelectButton, workspaceButton, fileButton, settingsButton),
     stageEl,
     keysEl,
     panel,
@@ -518,7 +532,7 @@ async function showConsole(me: SessionInfo) {
     "paste",
     (event) => {
       const shell = current();
-      if (!shell || panel.open || !workspacePanel.element.hidden || event.defaultPrevented) return;
+      if (!shell || panel.open || !workspacePanel.element.hidden || !filePanel.element.hidden || event.defaultPrevented) return;
       const target = event.target;
       if (target instanceof HTMLElement && target.matches("input, textarea, select, [contenteditable]")) return;
       if (target instanceof Node && shell.term.element?.contains(target)) return;
@@ -573,6 +587,7 @@ function closeWorkspacePanel() {
 function toggleWorkspacePanel() {
   if (!workspacePanel.element.hidden) return closeWorkspacePanel();
   const preferred = currentAccount() ?? emptyAccount;
+  if (!filePanel.element.hidden) hideFilePanel();
   current()?.hide();
   emptyEl.hidden = true;
   chooseEl.hidden = true;
@@ -582,11 +597,39 @@ function toggleWorkspacePanel() {
   paintStatus();
 }
 
+function hideFilePanel() {
+  filePanel.element.hidden = true;
+  fileButton.setAttribute("aria-expanded", "false");
+  showKeys();
+}
+
+function closeFilePanel() {
+  hideFilePanel();
+  current()?.show(!coarse.matches);
+  settle();
+  if (coarse.matches || !current()) fileButton.focus({ preventScroll: true });
+  paintStatus();
+}
+
+function toggleFilePanel() {
+  if (!filePanel.element.hidden) return closeFilePanel();
+  const preferred = currentAccount() ?? emptyAccount;
+  if (!workspacePanel.element.hidden) hideWorkspacePanel();
+  current()?.hide();
+  emptyEl.hidden = true;
+  chooseEl.hidden = true;
+  filePanel.show(accounts, preferred);
+  fileButton.setAttribute("aria-expanded", "true");
+  showKeys();
+  paintStatus();
+}
+
 /**
  * + opens a shell for the only account, or fills the stage with the signed-in
  * accounts to pick from, the open tab's account first in focus.
  */
 function openNew() {
+  if (!filePanel.element.hidden) closeFilePanel();
   if (!workspacePanel.element.hidden) closeWorkspacePanel();
   if (accounts.length < 2) return void create(currentAccount() ?? emptyAccount);
   current()?.hide();
@@ -680,7 +723,7 @@ function applyTerminals(next: TerminalInfo[]) {
 
 /** Makes sure a tab is showing: the current one, the last used, or the first. */
 function settle() {
-  if (!consoleEl || !workspacePanel.element.hidden || !chooseEl.hidden) return;
+  if (!consoleEl || !workspacePanel.element.hidden || !filePanel.element.hidden || !chooseEl.hidden) return;
   if (currentId) return;
   const remembered = recall(LAST);
   const candidates = emptyAccount && accounts.includes(emptyAccount) ? terminals.filter((terminal) => terminal.account === emptyAccount) : terminals;
@@ -708,6 +751,7 @@ function select(id: string) {
   emptyEl.hidden = true;
   chooseEl.hidden = true;
   if (!workspacePanel.element.hidden) hideWorkspacePanel();
+  if (!filePanel.element.hidden) hideFilePanel();
   shell.show(focus);
   // Hidden only now, so focus passes straight from one shell to the other and a
   // phone's keyboard stays up rather than dropping and coming back.

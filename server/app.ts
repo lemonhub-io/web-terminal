@@ -6,6 +6,7 @@ import { z } from "zod";
 import { errorMessage, logger } from "./log.ts";
 import type { Assets } from "./assets.ts";
 import { Auth, MAX_ACCOUNTS, terminalOwner, type Session, type SessionIdentity, type Throttle } from "./auth.ts";
+import { fileRoutes } from "./file-routes.ts";
 import { HttpError, statusOf } from "./http-error.ts";
 import type { TerminalInfo, TerminalOptions } from "./terminal.ts";
 import type { Workspaces } from "./workspaces.ts";
@@ -226,6 +227,7 @@ export function createTermApp({ auth, throttle, terminals, assets, workspaces }:
     return c.json({ ok: true });
   });
 
+  api.route("/files", fileRoutes());
   app.route("/api", api);
   app.get("*", (c) => {
     const pathname = new URL(c.req.url).pathname;

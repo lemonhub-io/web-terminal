@@ -18,6 +18,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - `server/terminal.ts` shell 会话，跑在宿主里。每个会话有一份无头 xterm 镜像，浏览器接入时发一帧 JSON 快照（屏幕、回滚、光标、模式），之后才是二进制实时输出。不要退回成原始字节回放：那会从转义序列中间开始、丢掉备用屏和鼠标模式，还会让旧的查询序列被重复应答。
 - `server/app.ts` 登录和终端管理 API。`server/main.ts` 校验 WebSocket 握手并交给宿主。`server/auth.ts` 管理 scrypt 密码、签名 cookie 和登录会话的终端归属。`server/assets.ts` 预压缩并提供已构建的客户端。
 - `server/workspaces.ts` 保存按账号归属的会话目录，沿用既有登录的 shell 宿主归属键。创建终端和删除会话按会话串行处理。
+- `server/file-routes.ts` 校验会话与账号后发送文件操作。`server/files.ts` 以对应 shell 用户的身份启动 `server/file-worker.ts`。上传和下载通过流传输，上传写完才在目标目录发布文件。
 - `client/shell.ts` 一个标签页：xterm、WebGL 渲染、键盘处理、重连。页面打开时所有标签都连上（后台标签才能报状态），切到后台时不销毁，也不参与尺寸计算。
 - `client/activity.ts` 后台标签的状态：运行中（转圈）、完成（强调色点）、等你确认（会呼吸的红点）。依据是 OSC 9;4 进度、通知（OSC 9/777/99、响铃）和输出节奏：持续输出算运行，停下 3 秒算结束，单次重绘（tmux 时钟）不算；结束后看屏幕末尾有没有各家 agent 的确认提示，来区分完成和等你。只在客户端做，不碰宿主。
 - `client/ime.ts` 输入法、语音输入、手机键盘这类经 textarea 进来的文字。xterm 自带的几条路径（组字结束、insertText、keydown 229 后的差分）在部分输入法下会把同一段话各发一次，所以全部拦下，只按 textarea 相对上次发送的增删发一次。例外是空格、大写字母、死键：xterm 在 keypress 里已经发出，浏览器随后写进 textarea 的同一个字只记下不再发；不要改成拦下 keypress 交给 textarea 发。组字预览也在这里，会换行。
@@ -27,6 +28,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - `client/themes.ts` 主题。调色板必须如实：黑是深色、白是浅色，浅色主题也一样。可读性靠 `minimumContrastRatio`，不靠把颜色对调。
 - `client/settings.ts` 设置的存取和原生 dialog 面板。`client/i18n.ts` 中英文案。
 - `client/workspaces.ts` 是终端区域内的会话管理列表。`client/main.ts` 将每个标签页选中的会话保存在 sessionStorage，终端请求和 WebSocket 显式携带所需的会话标识。
+- `client/files.ts` 是终端区域内的远程文件管理器。下载走附件链接，上传直接提交文件数据。同名替换和删除需要在界面上确认。
 - `client/dom.ts` 节点协调、点击期间的更新延迟，以及需要保留终端焦点和用户激活状态的触屏点击处理。标签和主题控件保留原节点，避免后台更新打断点击、双击和焦点。
 - `client/fonts/` 两个回退字体由 `tools/subset-fonts.py` 生成，不手改。
 

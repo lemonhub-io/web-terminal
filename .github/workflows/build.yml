@@ -28,5 +28,5 @@ jobs:
           name: web-terminal-client
           path: client/dist/
           if-no-files-found: error
-      - name: Check terminal text selection
+      - name: Check browser interaction
         run: node tools/test-selection.mjs

@@ -85,6 +85,19 @@ bar adds Esc, Tab, Ctrl, Alt, arrows, and Paste. The layout follows the
 visible screen when the keyboard opens. Browsers that support web app
 installation can add the terminal to the home screen.
 
+### Remote files
+
+Open **Files** in the toolbar. The file manager starts in the selected
+account's home directory. Open a folder, go to its parent, or enter an absolute
+path. You can show hidden files, create folders, upload several files, download
+files, and rename or delete items. Click a file name to download it. Replacing
+an existing upload or deleting an item asks for confirmation. Deleting a
+folder removes its contents as well.
+
+Use the account selector to manage files for another signed-in account. File
+operations run as the same operating-system user as that account's shells.
+Sessions under the same account share the filesystem visible to that user.
+
 ## Deployment
 
 ### Services and proxy
@@ -116,8 +129,8 @@ supplies the client address for sign-in throttling.
 
 The [Build workflow](https://github.com/lemonhub-io/web-terminal/actions/workflows/build.yml)
 runs on pushes to `main`, pull requests, and manual dispatch. It builds the
-client from the lockfile and checks touch selection, handle dragging, and
-both clipboard paths in Chromium. The `web-terminal-client` artifact
+client from the lockfile and checks session switching, touch selection,
+clipboard behavior, and file navigation in Chromium. The `web-terminal-client` artifact
 contains the contents of `client/dist/`. Use an artifact from a successful
 run for the revision you are deploying.
 

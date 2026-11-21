@@ -69,6 +69,12 @@ const PATHS = {
   sessions: "M3 3h8v7H3zM5 6l1.5 1.5L5 9m4-1h1m3-2v7H6",
   edit: "m4 9 6.5-6.5 3 3L7 12l-4 1zM9 4l3 3",
   trash: "M3 5h10M6 3h4m2 2-1 8H5L4 5m3 2v4m2-4v4",
+  folder: "M2.5 4h4l1.5 2h5.5v6h-11z",
+  file: "M4 2.5h5l3 3.5v7.5H4zM9 3v3h3",
+  link: "M7 5l1.5-1.5a2.1 2.1 0 0 1 3 3L10 8M9 11l-1.5 1.5a2.1 2.1 0 0 1-3-3L6 8m0 2 4-4",
+  home: "m2.5 7 5.5-4.5L13.5 7M4 6.5v6.5h8V6.5M7 13V9h2v4",
+  up: "m4 7 4-4 4 4M8 3v10",
+  refresh: "M12.5 6.5a4.6 4.6 0 1 0 .3 3.1M12.5 3v3.5H9",
   sliders: "M2 5h6M12 5h2M2 11h2M8 11h6M10 3v4M6 9v4",
 } as const;
 
