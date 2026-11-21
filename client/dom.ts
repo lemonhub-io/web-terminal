@@ -54,6 +54,7 @@ const PATHS = {
   plus: "M8 3v10M3 8h10",
   close: "M4 4l8 8M12 4l-8 8",
   copy: "M6 6h7v7H6zM10 3H3v7",
+  select: "M3 5V3h5m3 0h2v2M3 11v2h2m3 0h5v-2M5 8h6",
   sliders: "M2 5h6M12 5h2M2 11h2M8 11h6M10 3v4M6 9v4",
 } as const;
 

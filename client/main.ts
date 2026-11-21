@@ -88,6 +88,7 @@ let chooseEl: HTMLElement;
 let choicesEl: HTMLElement;
 let statusEl: HTMLElement;
 let copyButton: HTMLButtonElement;
+let touchSelectButton: HTMLButtonElement;
 let keysEl: HTMLElement;
 let newButton: HTMLButtonElement;
 let openButton: HTMLButtonElement;
@@ -149,7 +150,11 @@ function paintStatus() {
 }
 
 function paintSelection() {
-  if (consoleEl) copyButton.hidden = !chooseEl.hidden || !current()?.term.hasSelection();
+  if (!consoleEl) return;
+  const shell = chooseEl.hidden ? current() : undefined;
+  touchSelectButton.hidden = !shell;
+  touchSelectButton.setAttribute("aria-pressed", String(!!shell?.touchSelectionActive));
+  copyButton.hidden = !shell?.term.hasSelection() || shell.touchSelectionActive;
 }
 
 function handleError(error: unknown) {
@@ -374,10 +379,16 @@ async function showConsole(me: SessionInfo) {
     on: { mousedown: keepTyping, click: () => void current()?.copySelection().catch(() => flash(t("clipboardDenied"))) },
   }, icon("copy"));
   copyButton.hidden = true;
+  touchSelectButton = h("button", {
+    class: "tool touch-select-button",
+    attrs: { type: "button", "aria-label": t("selectText"), title: t("selectText"), "aria-pressed": "false" },
+    on: { pointerdown: keepTyping, click: () => current()?.toggleTouchSelection() },
+  }, icon("select"));
+  touchSelectButton.hidden = true;
   const root = h(
     "div",
     { class: "app" },
-    h("header", { class: "strip" }, tabsEl, statusEl, copyButton, settingsButton),
+    h("header", { class: "strip" }, tabsEl, statusEl, copyButton, touchSelectButton, settingsButton),
     stageEl,
     keysEl,
     panel,

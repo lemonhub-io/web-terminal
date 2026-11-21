@@ -13,6 +13,7 @@ import { activeTheme, contrastRatio, fontFamily, primaryFont, settings } from ".
 import { TextSelection } from "./text-selection.ts";
 import { toXterm } from "./themes.ts";
 import { TouchScroll } from "./touch-scroll.ts";
+import { TouchSelection } from "./touch-selection.ts";
 
 export type ShellStatus = "connecting" | "connected" | "reconnecting";
 
@@ -95,6 +96,7 @@ export class Shell {
   private readonly observer: ResizeObserver;
   private readonly touchScroll: TouchScroll;
   private readonly textSelection: TextSelection;
+  private readonly touchSelection: TouchSelection;
   private readonly activity: ActivityWatch;
   private webgl: WebglAddon | null = null;
   private socket: WebSocket | null = null;
@@ -148,7 +150,8 @@ export class Shell {
     term.unicode.activeVersion = "11";
     term.open(this.mount);
     this.textSelection = new TextSelection(term, this.mount, IS_MAC);
-    this.touchScroll = new TouchScroll(term, this.textSelection);
+    this.touchSelection = new TouchSelection(term, this.mount, () => host.selection(this));
+    this.touchScroll = new TouchScroll(term, this.touchSelection);
     term.onSelectionChange(() => host.selection(this));
     this.activity = new ActivityWatch(term, (state) => host.activity(this, state));
     this.startWebgl();
@@ -268,6 +271,15 @@ export class Shell {
     if (this.term.getSelection() === text) this.term.clearSelection();
   }
 
+  get touchSelectionActive() {
+    return this.touchSelection.active;
+  }
+
+  toggleTouchSelection() {
+    if (this.touchSelection.active) this.touchSelection.close();
+    else this.touchSelection.open();
+  }
+
   focus() {
     this.term.focus();
   }
@@ -289,6 +301,7 @@ export class Shell {
   hide() {
     this.textSelection.cancel();
     this.touchScroll.stop();
+    this.touchSelection.close();
     this.visible = false;
     this.activity.shown(false);
     this.mount.hidden = true;
@@ -406,6 +419,7 @@ export class Shell {
     this.observer.disconnect();
     this.textSelection.cancel();
     this.touchScroll.dispose();
+    this.touchSelection.close();
     this.socket?.close(1000);
     this.socket = null;
     this.term.dispose();

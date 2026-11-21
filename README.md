@@ -33,8 +33,8 @@ It is a single small Node server, a plain TypeScript client on
   otherwise; Shift+Enter sends a line break to programs that take one; programs
   can copy to the clipboard with OSC 52 (never read it).
 - **Text selection.** Drag to select terminal text, including in full-screen
-  programs with mouse tracking. On touch screens, hold briefly then drag.
-  The Copy selection button appears when text is selected.
+  programs with mouse tracking. On touch screens, hold a word or tap Select text,
+  then drag to select or adjust the handles. Tap Copy to copy the selection.
 - **Phones.** Swipe through shell history and full-screen programs, with
   momentum after lifting your finger. A key bar with Esc, Tab, Ctrl, Alt,
   arrows and Paste, a layout that stays above the on-screen keyboard, and it

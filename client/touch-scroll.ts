@@ -1,5 +1,5 @@
 import type { Terminal } from "@xterm/xterm";
-import type { TextSelection } from "./text-selection.ts";
+import type { TouchSelection } from "./touch-selection.ts";
 
 /** Touch panning for xterm's virtual viewport, which only handles mouse wheels. */
 export class TouchScroll {
@@ -13,7 +13,7 @@ export class TouchScroll {
   private hold = 0;
   private selecting = false;
 
-  constructor(private readonly term: Terminal, private readonly selection: TextSelection) {
+  constructor(private readonly term: Terminal, private readonly selection: TouchSelection) {
     this.element = term.element!;
     this.screen = this.element.querySelector<HTMLElement>(".xterm-screen")!;
     const { signal } = this.events;
@@ -23,17 +23,24 @@ export class TouchScroll {
       const touch = event.touches[0]!;
       this.finger = { id: touch.identifier, x: touch.clientX, y: touch.clientY, lastY: touch.clientY, time: event.timeStamp, dragging: false };
       if (event.target instanceof Node && this.screen.contains(event.target)) {
-        this.hold = window.setTimeout(() => {
-          this.selecting = this.selection.startTouch(touch.clientX, touch.clientY);
-        }, 450);
+        if (this.selection.active) {
+          this.selecting = this.selection.start(touch.clientX, touch.clientY);
+          if (this.selecting) event.preventDefault();
+        } else {
+          this.hold = window.setTimeout(() => {
+            this.selecting = this.selection.start(touch.clientX, touch.clientY, true);
+          }, 380);
+        }
       }
-    }, { passive: true, signal });
+    }, { passive: false, signal });
     this.element.addEventListener("touchmove", (event) => this.move(event), { passive: false, signal });
     this.element.addEventListener("touchend", (event) => {
       const finger = this.finger;
       this.finger = null;
       window.clearTimeout(this.hold);
       if (this.selecting) {
+        const touch = Array.from(event.changedTouches).find((touch) => touch.identifier === finger?.id);
+        if (touch) this.selection.move(touch.clientX, touch.clientY);
         event.preventDefault();
         this.stop();
         return;
@@ -45,7 +52,7 @@ export class TouchScroll {
     }, { passive: false, signal });
     this.element.addEventListener("touchcancel", () => this.stop(), { signal });
     this.element.addEventListener("contextmenu", (event) => {
-      if (this.selecting) {
+      if (this.selecting || (this.finger && !this.finger.dragging)) {
         event.preventDefault();
         event.stopPropagation();
       }
@@ -64,13 +71,13 @@ export class TouchScroll {
     const touch = event.touches[0]!;
     if (this.selecting) {
       event.preventDefault();
-      this.selection.moveTouch(touch.clientX, touch.clientY);
+      this.selection.move(touch.clientX, touch.clientY);
       return;
     }
     if (!finger.dragging) {
       const dy = touch.clientY - finger.y;
       const dx = touch.clientX - finger.x;
-      if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 12) return;
       window.clearTimeout(this.hold);
       if (Math.abs(dx) > Math.abs(dy)) return this.stop();
       finger.dragging = true;
@@ -131,7 +138,7 @@ export class TouchScroll {
   stop() {
     window.clearTimeout(this.hold);
     this.selecting = false;
-    this.selection.endTouch();
+    this.selection.end();
     cancelAnimationFrame(this.frame);
     this.frame = 0;
     this.finger = null;

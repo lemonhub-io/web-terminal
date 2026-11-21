@@ -7,6 +7,7 @@ import { WebSocketServer } from "ws";
 import { Assets } from "../server/assets.ts";
 
 const text = "SELECTIONCHECK";
+const line = `${text} EXTRA`;
 const id = "000000000000000000000001";
 const assets = new Assets("client/dist");
 const server = createServer(async (req, res) => {
@@ -26,7 +27,7 @@ const sockets = new WebSocketServer({ server });
 const writes = [];
 let size;
 sockets.on("connection", (socket) => {
-  socket.send(JSON.stringify({ type: "snapshot", cols: 80, rows: 24, data: text + "\x1b[?1000h\x1b[?1006h" }));
+  socket.send(JSON.stringify({ type: "snapshot", cols: 80, rows: 24, data: line + "\x1b[?1000h\x1b[?1006h" }));
   socket.on("message", (data, binary) => {
     if (binary) writes.push(data.toString());
     else size = JSON.parse(data.toString());
@@ -71,7 +72,8 @@ try {
     return result.result.value;
   };
   await send("Browser.grantPermissions", { origin, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
-  await send("Emulation.setDeviceMetricsOverride", { width: 900, height: 600, deviceScaleFactor: 1, mobile: false });
+  await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 750, deviceScaleFactor: 2, mobile: true });
+  await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
   await send("Page.navigate", { url: origin });
   const screen = 'document.querySelector(".xterm.enable-mouse-events .xterm-screen")';
   await waitFor(() => evaluate(`Boolean(${screen})`), "Terminal did not enter mouse mode");
@@ -79,40 +81,39 @@ try {
   const { left, top, width, height } = await evaluate(`${screen}.getBoundingClientRect().toJSON()`);
   const x = (col) => left + col * width / size.cols;
   const y = top + height / size.rows / 2;
-  const mouse = (type, col, button, buttons) => send("Input.dispatchMouseEvent", {
-    type, x: x(col), y, button, buttons, clickCount: 1,
-  });
-  const copy = 'document.querySelector(\'button[aria-label="Copy selection"]\')';
+  const touch = (type, point) => send("Input.dispatchTouchEvent", { type, touchPoints: point ? [{ ...point, id: 1 }] : [] });
+  const center = async (selector) => evaluate(`(() => {
+    const { x, y, width, height } = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+    return { x: x + width / 2, y: y + height / 2 };
+  })()`);
+  const tap = async (selector) => {
+    await touch("touchStart", await center(selector));
+    await touch("touchEnd");
+  };
+  const copy = ".touch-actions-row button:first-of-type";
   const clipboard = () => evaluate("navigator.clipboard.readText()");
-  const copyText = async () => {
-    assert.equal(await evaluate(`${copy}.hidden`), false, "Terminal selection did not appear");
-    await evaluate(`${copy}.click()`);
-    assert.equal(await waitFor(clipboard, "Clipboard did not receive the selection"), text);
+  const copyText = async (expected) => {
+    await tap(copy);
+    await waitFor(async () => await clipboard() === expected, `Clipboard did not receive ${expected}`);
   };
 
-  await mouse("mousePressed", 0.1, "left", 1);
-  await mouse("mouseMoved", text.length + 0.1, "none", 1);
-  await mouse("mouseReleased", text.length + 0.1, "left", 0);
-  await copyText();
-  assert.deepEqual(writes, [], "Text drag sent mouse reports to the program");
-
-  await mouse("mousePressed", 18, "left", 1);
-  await mouse("mouseReleased", 18, "left", 0);
-  await waitFor(() => writes.length >= 2, "A click did not reach the program");
-  assert.match(writes.join(""), /\x1b\[<0;\d+;1M\x1b\[<0;\d+;1m/);
-
-  await evaluate('navigator.clipboard.writeText("")');
-  await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
-  const touch = (type, col) => send("Input.dispatchTouchEvent", {
-    type, touchPoints: col === undefined ? [] : [{ x: x(col), y, id: 1 }],
-  });
-  await touch("touchStart", 0.5);
-  await waitFor(() => evaluate(`!${copy}.hidden`), "Touch hold did not start a selection");
-  await touch("touchMove", text.length - 0.5);
+  await touch("touchStart", { x: x(4.5), y });
+  await waitFor(() => evaluate('Boolean(document.querySelector(".touch-handle.end:not([hidden])"))'), "Touch hold did not show selection handles");
   await touch("touchEnd");
-  await copyText();
-  assert.equal(writes.length, 2, "Touch selection sent mouse reports to the program");
-  console.log("Mouse drag and touch hold copied terminal text with mouse tracking enabled");
+  await copyText(text);
+
+  const handle = await center(".touch-handle.end");
+  await touch("touchStart", handle);
+  await touch("touchMove", { x: handle.x + x(line.length) - x(text.length), y: handle.y });
+  await touch("touchEnd");
+  await copyText(line);
+
+  await evaluate('Object.defineProperty(navigator, "clipboard", { value: undefined })');
+  await tap(copy);
+  const manual = 'document.querySelector(".touch-actions textarea:not([hidden])")';
+  assert.equal(await evaluate(`${manual}?.value`), line, "Manual copy lost the selected text");
+  assert.deepEqual(writes, [], "Touch selection sent mouse reports to the program");
+  console.log("Phone touch hold, selection handle, Copy and manual copy passed with mouse tracking enabled");
 } finally {
   if (sessionId) await driverRequest(`/session/${sessionId}`, undefined, "DELETE").catch(() => {});
   driver.kill();
