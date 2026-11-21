@@ -8,7 +8,7 @@ import { WebSocketServer } from "ws";
 import { config } from "./config.ts";
 import { logger } from "./log.ts";
 import { Assets } from "./assets.ts";
-import { Auth, Throttle } from "./auth.ts";
+import { Auth, terminalOwners, Throttle } from "./auth.ts";
 import { HostClient } from "./host-client.ts";
 import { createTermApp, sameOrigin } from "./app.ts";
 
@@ -34,7 +34,7 @@ server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
   if (!session) return refuse("401 Unauthorized");
   const match = /^\/ws\/terminals\/([a-f0-9]{24})$/.exec(new URL(req.url ?? "/", "http://localhost").pathname);
   if (!match) return refuse("404 Not Found");
-  sockets.handleUpgrade(req, socket, head, (ws) => terminals.attach(match[1]!, ws, session.accounts.map((account) => account.username)));
+  sockets.handleUpgrade(req, socket, head, (ws) => terminals.attach(match[1]!, ws, terminalOwners(session)));
 });
 
 // A rebuilt client is picked up without ending the shells: `systemctl --user reload`.

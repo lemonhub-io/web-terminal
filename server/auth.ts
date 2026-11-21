@@ -35,6 +35,7 @@ export interface Account {
 export interface SessionIdentity {
   username: string;
   systemUser?: string;
+  loginId: string;
 }
 
 /** The accounts a cookie signs in to, in the order they were added. */
@@ -46,10 +47,14 @@ export interface Session {
   changed: boolean;
 }
 
-const identity = (account: Account): SessionIdentity => ({
+const identity = (account: Account): Omit<SessionIdentity, "loginId"> => ({
   username: account.username,
   ...(account.systemUser ? { systemUser: account.systemUser } : {}),
 });
+
+/** The shell host treats owners as opaque keys. Keep the account name separate for display. */
+export const terminalOwner = (account: SessionIdentity) => `login:${account.loginId}:${account.username}`;
+export const terminalOwners = (session: Session) => session.accounts.map(terminalOwner);
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
@@ -140,19 +145,20 @@ export class Auth {
     return createHmac("sha256", fs.readFileSync(this.keyFile)).update(account.hash).digest();
   }
 
-  async login(username: string, password: string): Promise<string | null> {
+  async login(username: string, password: string, session?: Session | null): Promise<string | null> {
     const account = this.findAccount(username);
     if (!account) {
       await verifyPassword(password, DUMMY_HASH);
       return null;
     }
     const passwordOk = await verifyPassword(password, account.hash);
-    return passwordOk ? this.issue(account) : null;
+    const loginId = session?.accounts.find((entry) => entry.username === account.username)?.loginId;
+    return passwordOk ? this.issue(account, Date.now(), loginId) : null;
   }
 
-  private issue(account: Account, now = Date.now()): string {
+  private issue(account: Account, now: number, loginId = randomBytes(12).toString("base64url")): string {
     const userPart = Buffer.from(account.username, "utf8").toString("base64url");
-    const payload = `${userPart}.${Math.floor(now / 1000) + MAX_AGE}.${randomBytes(12).toString("base64url")}`;
+    const payload = `${userPart}.${Math.floor(now / 1000) + MAX_AGE}.${loginId}`;
     const signature = createHmac("sha256", this.signingKey(account)).update(payload).digest("base64url");
     return `${payload}.${signature}`;
   }
@@ -172,7 +178,7 @@ export class Auth {
         session.changed = true;
         continue;
       }
-      session.accounts.push(identity(checked.account));
+      session.accounts.push({ ...identity(checked.account), loginId: checked.loginId });
       session.tokens.push(checked.renewed ?? token);
       if (checked.renewed) session.changed = true;
     }
@@ -180,12 +186,14 @@ export class Auth {
   }
 
   /** One token: its account, plus a fresh token when it should roll forward. */
-  private check(token: string, now: number): { account: Account; renewed?: string } | null {
+  private check(token: string, now: number): { account: Account; loginId: string; renewed?: string } | null {
     const split = token.lastIndexOf(".");
     if (split < 0) return null;
     const payload = token.slice(0, split);
     const parts = payload.split(".");
     if (parts.length !== 3 || !parts[0]) return null;
+    const loginId = parts[2]!;
+    if (!/^[A-Za-z0-9_-]{16}$/.test(loginId)) return null;
     const account = this.findAccount(Buffer.from(parts[0], "base64url").toString("utf8"));
     if (!account) return null;
     const expected = createHmac("sha256", this.signingKey(account)).update(payload).digest();
@@ -193,7 +201,7 @@ export class Auth {
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
     const left = Number(parts[1]) - Math.floor(now / 1000);
     if (!(left > 0)) return null;
-    return { account, ...(left < RENEW_BELOW && { renewed: this.issue(account, now) }) };
+    return { account, loginId, ...(left < RENEW_BELOW && { renewed: this.issue(account, now, loginId) }) };
   }
 
   static join(tokens: readonly string[]): string {

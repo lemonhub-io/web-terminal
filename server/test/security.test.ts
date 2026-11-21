@@ -4,9 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { IncomingMessage } from "node:http";
+import type { WebSocket } from "ws";
 import { clientAddress, createTermApp, sameOrigin } from "../app.ts";
 import { Assets } from "../assets.ts";
-import { Auth, Throttle } from "../auth.ts";
+import { Auth, terminalOwners, Throttle } from "../auth.ts";
 import { Terminals } from "../terminal.ts";
 
 const request = (remoteAddress: string, forwarded?: string) =>
@@ -52,16 +53,13 @@ test("Auth keeps one token per account and drops only the one whose password cha
     assert.ok(tLemon && tNia);
     assert.equal(await auth.login("nia", "pass1"), null);
     const both = auth.verify(Auth.join([tLemon, tNia]));
-    assert.deepEqual(both?.accounts, [
-      { username: "lemon", systemUser: "lemon" },
-      { username: "nia", systemUser: "nia" },
-    ]);
+    assert.deepEqual(both?.accounts.map(({ username, systemUser }) => ({ username, systemUser })), auth.listAccounts());
     assert.equal(both?.changed, false);
 
     // Changing nia's password signs out nia only.
     await auth.setAccount("nia", "pass3");
     const left = auth.verify(Auth.join([tLemon, tNia]));
-    assert.deepEqual(left?.accounts, [{ username: "lemon", systemUser: "lemon" }]);
+    assert.deepEqual(left?.accounts, both?.accounts.slice(0, 1));
     assert.deepEqual(left?.tokens, [tLemon]);
     assert.equal(left?.changed, true);
     assert.equal(auth.verify(tNia), null);
@@ -70,7 +68,7 @@ test("Auth keeps one token per account and drops only the one whose password cha
   }
 });
 
-test("A second sign-in adds an account, and each shell stays with its account", async () => {
+test("Each login has its own shells, including when two browsers sign in as the same account", async () => {
   process.env.SHELL = "/bin/sh";
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wt-app-"));
   const terminals = new Terminals(2);
@@ -79,33 +77,59 @@ test("A second sign-in adds an account, and each shell stays with its account", 
     await auth.setAccount("a", "pa");
     await auth.setAccount("b", "pb");
     const app = createTermApp({ auth, throttle: new Throttle(), terminals, assets: new Assets(dir) });
-    let cookie = "";
-    const call = async (method: string, route: string, body?: unknown) => {
-      const res = await app.request(
-        `http://localhost/api/${route}`,
-        {
-          method,
-          headers: { "Content-Type": "application/json", Origin: "http://localhost", Host: "localhost", Cookie: cookie },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        },
-        { incoming: request("127.0.0.1"), outgoing: {} as never },
-      );
-      const set = res.headers.get("set-cookie");
-      if (set) cookie = set.split(";")[0]!;
-      return { status: res.status, data: (await res.json()) as any };
+    const browser = () => {
+      let cookie = "";
+      const call = async (method: string, route: string, body?: unknown) => {
+        const res = await app.request(
+          `http://localhost/api/${route}`,
+          {
+            method,
+            headers: { "Content-Type": "application/json", Origin: "http://localhost", Host: "localhost", Cookie: cookie },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          },
+          { incoming: request("127.0.0.1"), outgoing: {} as never },
+        );
+        const set = res.headers.get("set-cookie");
+        if (set) cookie = set.split(";")[0]!;
+        return { status: res.status, data: (await res.json()) as any };
+      };
+      return { call, cookie: () => Auth.read(cookie) };
     };
+    const first = browser();
+    const other = browser();
+    const { call } = first;
 
     assert.deepEqual((await call("POST", "session", { username: "a", password: "pa" })).data, { username: "a", accounts: ["a"] });
     assert.equal((await call("POST", "terminals", { account: "b" })).status, 403);
     assert.equal((await call("POST", "session", { username: "b", password: "wrong" })).status, 401);
     assert.deepEqual((await call("POST", "session", { username: "b", password: "pb" })).data, { username: "a", accounts: ["a", "b"] });
-    assert.equal((await call("POST", "terminals", { account: "b", cols: 80, rows: 24 })).data.account, "b");
-    assert.deepEqual((await call("GET", "terminals")).data.map((info: { account: string }) => info.account), ["b"]);
+    const made = (await call("POST", "terminals", { account: "b", cols: 80, rows: 24 })).data;
+    assert.equal(made.account, "b");
+    assert.deepEqual((await call("GET", "terminals")).data.map((info: { id: string }) => info.id), [made.id]);
+
+    assert.equal((await other.call("POST", "session", { username: "b", password: "pb" })).status, 200);
+    assert.deepEqual((await other.call("GET", "terminals")).data, []);
+    assert.equal((await other.call("PATCH", `terminals/${made.id}`, { name: "Other" })).status, 404);
+    assert.equal((await other.call("DELETE", `terminals/${made.id}`)).status, 404);
+    let closeCode: number | undefined;
+    const socket = { close: (code: number) => { closeCode = code; } };
+    terminals.attach(made.id, socket as WebSocket, terminalOwners(auth.verify(other.cookie())!));
+    assert.equal(closeCode, 4004);
+    const renamed = await call("PATCH", `terminals/${made.id}`, { name: "Mine" });
+    assert.equal(renamed.data.name, "Mine");
+    assert.equal(renamed.data.account, "b");
+
+    const session = auth.verify(first.cookie())!;
+    const renewed = auth.verify(first.cookie(), Date.now() + 31 * 86400_000)!;
+    assert.equal(renewed.changed, true);
+    assert.deepEqual(terminalOwners(renewed), terminalOwners(session));
+    assert.equal((await call("POST", "session", { username: "b", password: "pb" })).status, 200);
+    assert.deepEqual(terminalOwners(auth.verify(first.cookie())!), terminalOwners(session));
 
     // Signing out of b keeps a and hides b's shell from this browser without ending it.
     assert.deepEqual((await call("DELETE", "session/b")).data, { username: "a", accounts: ["a"] });
     assert.deepEqual((await call("GET", "terminals")).data, []);
-    assert.equal(terminals.list(["b"]).length, 1);
+    assert.equal(terminals.list(terminalOwners(session)).length, 1);
   } finally {
     terminals.close();
     fs.rmSync(dir, { recursive: true, force: true });

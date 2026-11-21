@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { errorMessage, logger } from "./log.ts";
 import type { Assets } from "./assets.ts";
-import { Auth, MAX_ACCOUNTS, type Session, type Throttle } from "./auth.ts";
+import { Auth, MAX_ACCOUNTS, terminalOwner, terminalOwners, type Session, type Throttle } from "./auth.ts";
 import { HttpError, statusOf } from "./http-error.ts";
 import type { TerminalInfo, TerminalOptions } from "./terminal.ts";
 
@@ -73,10 +73,14 @@ const terminalOptions = z.object({
 
 const terminalName = z.object({ name: z.string().max(200) });
 
-const owners = (session: Session) => session.accounts.map((account) => account.username);
-
 /** Who the page is signed in as. The first account is the one used on the sign-in page. */
-const sessionInfo = (session: Session) => ({ username: session.accounts[0]?.username ?? "", accounts: owners(session) });
+const sessionInfo = (session: Session) => ({ username: session.accounts[0]?.username ?? "", accounts: session.accounts.map((account) => account.username) });
+
+function publicTerminal(info: TerminalInfo, session: Session): TerminalInfo {
+  const account = session.accounts.find((entry) => terminalOwner(entry) === info.account);
+  if (!account) throw new HttpError(404, "Terminal not found");
+  return { ...info, account: account.username };
+}
 
 async function readCredentials(c: { req: { json: () => Promise<unknown> } }) {
   const parsed = credentials.safeParse(await c.req.json().catch(() => undefined));
@@ -113,7 +117,8 @@ export function createTermApp({ auth, throttle, terminals, assets }: TermService
     const wait = throttle.wait(key);
     if (wait) throw new HttpError(429, `Too many attempts. Try again in ${Math.ceil(wait / 1000)} seconds`);
     const { username, password } = await readCredentials(c);
-    const token = await auth.login(username, password);
+    const before = auth.verify(Auth.read(c.req.header("cookie")));
+    const token = await auth.login(username, password, before);
     if (!token) {
       throttle.fail(key);
       throw new HttpError(401, "Incorrect username or password");
@@ -122,10 +127,8 @@ export function createTermApp({ auth, throttle, terminals, assets }: TermService
     // Accounts this browser is already signed in to stay signed in, so the
     // settings panel can add one more. Signing in again to one of them only
     // replaces its token, in place.
-    const signedIn = auth.verify(token)!.accounts[0]!.username;
-    const before = auth.verify(Auth.read(c.req.header("cookie")));
     const tokens = before?.tokens ?? [];
-    const at = before ? before.accounts.findIndex((account) => account.username === signedIn) : -1;
+    const at = before ? before.accounts.findIndex((account) => account.username === username) : -1;
     if (at >= 0) tokens[at] = token;
     else if (tokens.length >= MAX_ACCOUNTS) throw new HttpError(409, `At most ${MAX_ACCOUNTS} accounts can be signed in at once`);
     else tokens.push(token);
@@ -160,22 +163,29 @@ export function createTermApp({ auth, throttle, terminals, assets }: TermService
     c.header("Set-Cookie", Auth.cookie(left.tokens));
     return c.json(sessionInfo(left));
   });
-  api.get("/terminals", async (c) => c.json(await terminals.list(owners(c.get("session")))));
+  api.get("/terminals", async (c) => {
+    const session = c.get("session");
+    const list = await terminals.list(terminalOwners(session));
+    return c.json(list.map((info) => publicTerminal(info, session)));
+  });
   api.post("/terminals", async (c) => {
     const options = terminalOptions.safeParse(await c.req.json().catch(() => ({})));
     const { account, ...size }: z.infer<typeof terminalOptions> = options.success ? options.data : {};
     const session = c.get("session");
     const owner = account === undefined ? session.accounts[0] : session.accounts.find((entry) => entry.username === account);
     if (!owner) throw new HttpError(403, "Sign in to that account first");
-    return c.json(await terminals.create({ ...size, ...(owner.systemUser ? { systemUser: owner.systemUser } : {}) }, owner.username));
+    const info = await terminals.create({ ...size, ...(owner.systemUser ? { systemUser: owner.systemUser } : {}) }, terminalOwner(owner));
+    return c.json(publicTerminal(info, session));
   });
   api.patch("/terminals/:id", async (c) => {
     const body = terminalName.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) throw new HttpError(400, "Give the terminal a name of up to 200 characters");
-    return c.json(await terminals.rename(c.req.param("id"), body.data.name, owners(c.get("session"))));
+    const session = c.get("session");
+    const info = await terminals.rename(c.req.param("id"), body.data.name, terminalOwners(session));
+    return c.json(publicTerminal(info, session));
   });
   api.delete("/terminals/:id", async (c) => {
-    await terminals.kill(c.req.param("id"), owners(c.get("session")));
+    await terminals.kill(c.req.param("id"), terminalOwners(c.get("session")));
     return c.json({ ok: true });
   });
 
