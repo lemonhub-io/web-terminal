@@ -32,6 +32,9 @@ It is a single small Node server, a plain TypeScript client on
 - **Keys.** Ctrl+V pastes; Ctrl+C copies when text is selected and interrupts
   otherwise; Shift+Enter sends a line break to programs that take one; programs
   can copy to the clipboard with OSC 52 (never read it).
+- **Text selection.** Drag to select terminal text, including in full-screen
+  programs with mouse tracking. On touch screens, hold briefly then drag.
+  The Copy selection button appears when text is selected.
 - **Phones.** Swipe through shell history and full-screen programs, with
   momentum after lifting your finger. A key bar with Esc, Tab, Ctrl, Alt,
   arrows and Paste, a layout that stays above the on-screen keyboard, and it
@@ -100,8 +103,11 @@ Shells start as login shells of `$SHELL` in the home directory, with
   signs in can too. Run it as an unprivileged user.
 - Accounts with scrypt-hashed passwords, and an HMAC-signed `Secure` session
   cookie that lasts 90 days. A browser can be signed in to several accounts at
-  once (Settings, Sign in to another account); each terminal belongs to one of
-  them. Changing an account's password signs that account out everywhere.
+  once (Settings, Sign in to another account). Each sign-in has its own terminals,
+  even across browsers using the same account. Reloading or reconnecting with
+  the same session restores them. Signing out or losing that session starts a
+  fresh terminal list on the next sign-in. Changing an account's password signs
+  that account out everywhere.
 - An account can be tied to a system user (`npm run passwd` asks). Its shells
   then start as that user through `sudo -n`, so the service account needs
   passwordless sudo for it.

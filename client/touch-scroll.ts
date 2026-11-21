@@ -1,4 +1,5 @@
 import type { Terminal } from "@xterm/xterm";
+import type { TextSelection } from "./text-selection.ts";
 
 /** Touch panning for xterm's virtual viewport, which only handles mouse wheels. */
 export class TouchScroll {
@@ -9,8 +10,10 @@ export class TouchScroll {
   private remainder = 0;
   private velocity = 0;
   private frame = 0;
+  private hold = 0;
+  private selecting = false;
 
-  constructor(private readonly term: Terminal) {
+  constructor(private readonly term: Terminal, private readonly selection: TextSelection) {
     this.element = term.element!;
     this.screen = this.element.querySelector<HTMLElement>(".xterm-screen")!;
     const { signal } = this.events;
@@ -19,17 +22,34 @@ export class TouchScroll {
       if (event.touches.length !== 1 || (event.target instanceof Element && event.target.closest(".scrollbar"))) return;
       const touch = event.touches[0]!;
       this.finger = { id: touch.identifier, x: touch.clientX, y: touch.clientY, lastY: touch.clientY, time: event.timeStamp, dragging: false };
+      if (event.target instanceof Node && this.screen.contains(event.target)) {
+        this.hold = window.setTimeout(() => {
+          this.selecting = this.selection.startTouch(touch.clientX, touch.clientY);
+        }, 450);
+      }
     }, { passive: true, signal });
     this.element.addEventListener("touchmove", (event) => this.move(event), { passive: false, signal });
     this.element.addEventListener("touchend", (event) => {
       const finger = this.finger;
       this.finger = null;
+      window.clearTimeout(this.hold);
+      if (this.selecting) {
+        event.preventDefault();
+        this.stop();
+        return;
+      }
       if (!finger?.dragging) return;
       // A swipe must not become a tap that focuses the input or clicks a TUI.
       event.preventDefault();
       if (event.timeStamp - finger.time < 100) this.coast(finger.x, finger.lastY);
     }, { passive: false, signal });
     this.element.addEventListener("touchcancel", () => this.stop(), { signal });
+    this.element.addEventListener("contextmenu", (event) => {
+      if (this.selecting) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }, { capture: true, signal });
     this.element.addEventListener("keydown", () => this.stop(), { signal });
     document.addEventListener("touchstart", (event) => {
       if (event.target instanceof Node && !this.element.contains(event.target)) this.stop();
@@ -42,10 +62,16 @@ export class TouchScroll {
     if (!finger) return;
     if (event.touches.length !== 1 || event.touches[0]!.identifier !== finger.id) return this.stop();
     const touch = event.touches[0]!;
+    if (this.selecting) {
+      event.preventDefault();
+      this.selection.moveTouch(touch.clientX, touch.clientY);
+      return;
+    }
     if (!finger.dragging) {
       const dy = touch.clientY - finger.y;
       const dx = touch.clientX - finger.x;
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+      window.clearTimeout(this.hold);
       if (Math.abs(dx) > Math.abs(dy)) return this.stop();
       finger.dragging = true;
     }
@@ -103,6 +129,9 @@ export class TouchScroll {
   }
 
   stop() {
+    window.clearTimeout(this.hold);
+    this.selecting = false;
+    this.selection.endTouch();
     cancelAnimationFrame(this.frame);
     this.frame = 0;
     this.finger = null;

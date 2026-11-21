@@ -10,6 +10,7 @@ import { type Activity, ActivityWatch } from "./activity.ts";
 import { h } from "./dom.ts";
 import { TextInput } from "./ime.ts";
 import { activeTheme, contrastRatio, fontFamily, primaryFont, settings } from "./settings.ts";
+import { TextSelection } from "./text-selection.ts";
 import { toXterm } from "./themes.ts";
 import { TouchScroll } from "./touch-scroll.ts";
 
@@ -20,6 +21,7 @@ export interface ShellHost {
   transform(data: string, applicationCursorKeys?: boolean): string;
   status(shell: Shell): void;
   title(shell: Shell, title: string): void;
+  selection(shell: Shell): void;
   /** What the program in a background tab is doing changed. */
   activity(shell: Shell, state: Activity): void;
   /** The shell exited or no longer exists on the server. */
@@ -92,6 +94,7 @@ export class Shell {
   private readonly fit = new FitAddon();
   private readonly observer: ResizeObserver;
   private readonly touchScroll: TouchScroll;
+  private readonly textSelection: TextSelection;
   private readonly activity: ActivityWatch;
   private webgl: WebglAddon | null = null;
   private socket: WebSocket | null = null;
@@ -123,6 +126,7 @@ export class Shell {
       cursorInactiveStyle: "outline",
       scrollback: 10_000,
       macOptionIsMeta: true,
+      macOptionClickForcesSelection: true,
       theme: toXterm(theme),
       // Lifts text that would be hard to read against its background, which is
       // what lets programs written for dark terminals work on a light one.
@@ -135,13 +139,17 @@ export class Shell {
     });
     this.term = term;
     term.loadAddon(this.fit);
-    term.loadAddon(new WebLinksAddon());
+    term.loadAddon(new WebLinksAddon((_event, uri) => {
+      if (!term.hasSelection()) window.open(uri, "_blank", "noopener");
+    }));
     term.loadAddon(new ClipboardAddon(undefined, clipboard));
     // The width table programs and tmux expect; the built-in one predates emoji.
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
     term.open(this.mount);
-    this.touchScroll = new TouchScroll(term);
+    this.textSelection = new TextSelection(term, this.mount, IS_MAC);
+    this.touchScroll = new TouchScroll(term, this.textSelection);
+    term.onSelectionChange(() => host.selection(this));
     this.activity = new ActivityWatch(term, (state) => host.activity(this, state));
     this.startWebgl();
 
@@ -206,9 +214,7 @@ export class Shell {
     if (matchesKey(event, "KeyC", "c", 67) && (event.shiftKey || this.term.hasSelection())) {
       if (event.type === "keydown") {
         event.preventDefault();
-        const text = this.term.getSelection();
-        if (text) void navigator.clipboard.writeText(text).catch(() => {});
-        this.term.clearSelection();
+        void this.copySelection().catch(() => {});
       }
       return false;
     }
@@ -255,6 +261,13 @@ export class Shell {
     this.term.paste(text);
   }
 
+  async copySelection() {
+    const text = this.term.getSelection();
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    if (this.term.getSelection() === text) this.term.clearSelection();
+  }
+
   focus() {
     this.term.focus();
   }
@@ -274,6 +287,7 @@ export class Shell {
   }
 
   hide() {
+    this.textSelection.cancel();
     this.touchScroll.stop();
     this.visible = false;
     this.activity.shown(false);
@@ -390,6 +404,7 @@ export class Shell {
     window.clearTimeout(this.timer);
     this.activity.dispose();
     this.observer.disconnect();
+    this.textSelection.cancel();
     this.touchScroll.dispose();
     this.socket?.close(1000);
     this.socket = null;

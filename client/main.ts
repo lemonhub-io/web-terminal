@@ -87,6 +87,7 @@ let emptyEl: HTMLElement;
 let chooseEl: HTMLElement;
 let choicesEl: HTMLElement;
 let statusEl: HTMLElement;
+let copyButton: HTMLButtonElement;
 let keysEl: HTMLElement;
 let newButton: HTMLButtonElement;
 let openButton: HTMLButtonElement;
@@ -139,11 +140,16 @@ function flash(text: string) {
 
 function paintStatus() {
   if (!consoleEl) return;
+  paintSelection();
   const shell = currentId ? shells.get(currentId) : undefined;
   const state = shell?.status ?? "idle";
   statusEl.dataset.state = state;
   statusEl.lastElementChild!.textContent = notice || (state === "connecting" || state === "reconnecting" ? t(state) : "");
   statusEl.title = state === "connected" ? t("connected") : "";
+}
+
+function paintSelection() {
+  if (consoleEl) copyButton.hidden = !chooseEl.hidden || !current()?.term.hasSelection();
 }
 
 function handleError(error: unknown) {
@@ -239,8 +245,7 @@ async function addAccount(username: string, password: string): Promise<string> {
   return "";
 }
 
-/** Signs this browser out of one account. Its shells keep running and come back
-    with the next sign-in to it. */
+/** Signs this browser out of one account and closes its terminal views. */
 async function removeAccount(account: string) {
   try {
     const me = await api<SessionInfo>(`session/${encodeURIComponent(account)}`, { method: "DELETE" });
@@ -259,6 +264,9 @@ const host: ShellHost = {
   transform: applyModifiers,
   status: (shell) => {
     if (shell.id === currentId) paintStatus();
+  },
+  selection: (shell) => {
+    if (shell.id === currentId) paintSelection();
   },
   title: (shell, title) => {
     const info = terminals.find((terminal) => terminal.id === shell.id);
@@ -361,10 +369,15 @@ async function showConsole(me: SessionInfo) {
     },
     icon("sliders"),
   );
+  copyButton = h("button", {
+    class: "tool", attrs: { type: "button", "aria-label": t("copySelection"), title: t("copySelection") },
+    on: { mousedown: keepTyping, click: () => void current()?.copySelection().catch(() => flash(t("clipboardDenied"))) },
+  }, icon("copy"));
+  copyButton.hidden = true;
   const root = h(
     "div",
     { class: "app" },
-    h("header", { class: "strip" }, tabsEl, statusEl, settingsButton),
+    h("header", { class: "strip" }, tabsEl, statusEl, copyButton, settingsButton),
     stageEl,
     keysEl,
     panel,
@@ -434,6 +447,7 @@ function openNew() {
   );
   choicesEl.replaceChildren(...buttons);
   chooseEl.hidden = false;
+  paintSelection();
   buttons[Math.max(0, accounts.indexOf(currentAccount() ?? ""))]?.focus();
 }
 
@@ -446,6 +460,7 @@ async function pick(account: string) {
 
 function closeChooser() {
   chooseEl.hidden = true;
+  paintSelection();
   const shell = current();
   if (shell) shell.show(!coarse.matches);
   else emptyEl.hidden = terminals.length > 0;
