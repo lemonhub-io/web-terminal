@@ -6,19 +6,22 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import { config } from "./config.ts";
-import { logger } from "./log.ts";
+import { errorMessage, logger } from "./log.ts";
 import { Assets } from "./assets.ts";
-import { Auth, terminalOwners, Throttle } from "./auth.ts";
+import { Auth, terminalOwner, Throttle } from "./auth.ts";
 import { HostClient } from "./host-client.ts";
 import { createTermApp, sameOrigin } from "./app.ts";
+import { Workspaces } from "./workspaces.ts";
+import { HttpError } from "./http-error.ts";
 
 const log = logger("web-terminal");
 
 const auth = new Auth(config.paths.secrets);
+const workspaces = new Workspaces(config.paths.secrets);
 const terminals = new HostClient(config.paths.socket);
 await terminals.ensure();
 const assets = new Assets(config.paths.dist);
-const app = createTermApp({ auth, throttle: new Throttle(), terminals, assets });
+const app = createTermApp({ auth, throttle: new Throttle(), terminals, assets, workspaces });
 
 const server = serve(
   { fetch: (request, env) => app.fetch(request, env as HttpBindings), hostname: "127.0.0.1", port: config.port },
@@ -32,9 +35,17 @@ server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
   if (!sameOrigin(req.headers.origin, req.headers.host)) return refuse("403 Forbidden");
   const session = auth.verify(Auth.read(req.headers.cookie));
   if (!session) return refuse("401 Unauthorized");
-  const match = /^\/ws\/terminals\/([a-f0-9]{24})$/.exec(new URL(req.url ?? "/", "http://localhost").pathname);
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const match = /^\/ws\/terminals\/([a-f0-9]{24})$/.exec(url.pathname);
   if (!match) return refuse("404 Not Found");
-  sockets.handleUpgrade(req, socket, head, (ws) => terminals.attach(match[1]!, ws, terminalOwners(session)));
+  try {
+    const owners = workspaces.select(session, url.searchParams.getAll("workspace")).map(terminalOwner);
+    sockets.handleUpgrade(req, socket, head, (ws) => terminals.attach(match[1]!, ws, owners));
+  } catch (error) {
+    if (error instanceof HttpError) return refuse(error.status === 404 ? "404 Not Found" : "400 Bad Request");
+    log.error("terminal upgrade", errorMessage(error));
+    refuse("500 Internal Server Error");
+  }
 });
 
 // A rebuilt client is picked up without ending the shells: `systemctl --user reload`.

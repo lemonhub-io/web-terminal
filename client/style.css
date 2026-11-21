@@ -799,6 +799,123 @@ select {
   font-size: 18px;
 }
 
+.workspace-panel {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: clamp(14px, 4vw, 32px);
+  background: var(--bg);
+}
+
+.workspace-panel:focus {
+  outline: none;
+}
+
+.workspace-head,
+.workspace-list,
+.workspace-status {
+  width: min(100%, 660px);
+  margin-inline: auto;
+}
+
+.workspace-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.workspace-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 18px;
+}
+
+.workspace-status {
+  margin-top: 0;
+  color: var(--bad);
+}
+
+.workspace-status:empty {
+  display: none;
+}
+
+.workspace-list {
+  display: grid;
+  gap: 4px;
+}
+
+.workspace-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.workspace-row.active {
+  background: var(--wash);
+}
+
+.workspace-open {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+  padding: 0 12px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+}
+
+.workspace-open:hover {
+  background: var(--wash);
+}
+
+.workspace-current {
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.workspace-row .tool {
+  width: 36px;
+  height: 40px;
+  margin-right: 2px;
+}
+
+.workspace-edit,
+.workspace-confirm {
+  gap: 6px;
+  padding: 6px 8px;
+  flex-wrap: wrap;
+}
+
+.workspace-edit input,
+.workspace-head select {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--raised);
+  font-size: 16px;
+}
+
+.workspace-edit input,
+.workspace-confirm span {
+  flex: 1;
+}
+
+.workspace-confirm .plain:first-of-type {
+  color: var(--bad);
+}
+
 .choose .hint {
   display: flex;
   gap: 16px;

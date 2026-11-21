@@ -40,14 +40,17 @@ printf '%s\n' "$PASSWORD" | WEB_TERMINAL_USERNAME=alice npm run passwd
 - Use **Settings** → **Sign in to another account** to sign in to up to eight
   accounts in one browser. The tab strip shows the terminals from those
   accounts together.
-- Each fresh sign-in gets its own terminal list, even when several people use
-  the same account. Browser tabs that share the same session cookie see the
-  same shells. Reloading, reconnecting, or reopening the browser with that
-  cookie restores the terminal screen, scrollback, cursor, and program modes.
-- Signing out clears the corresponding login from the browser. The next
-  sign-in starts a fresh terminal list. Existing shells keep running until
-  they exit or the shell host stops. Close shells before signing out when
-  you want to end them.
+- Each fresh sign-in opens its own session, even when several people use the
+  same account. A session holds a group of terminal tabs. Use **Sessions** in
+  the toolbar to view the sessions for a signed-in account, open a different
+  one, or create, rename, and delete sessions. Deletion asks for confirmation
+  and closes the terminals in that session.
+- A browser tab remembers its session choice across reloads. Switching leaves
+  the other session's shells running. Opening the same session in two browser
+  tabs connects both to the same shells. Reconnecting restores the screen,
+  scrollback, cursor, and program modes.
+- Signing out clears that browser login. The next sign-in starts a fresh
+  session, and **Sessions** still lists the account's saved sessions.
 
 ### Text selection and clipboard
 
@@ -154,22 +157,24 @@ and reloads its own service. Install the regular runtime dependencies with
 When upgrading from versions that used account-wide terminal tabs, save work
 and close old tabs before deploying. The upgraded app starts with a
 session-scoped terminal list. Legacy shells in an existing host remain
-running until they exit or the host stops.
+running until they exit or the host stops. Existing isolated logins register
+their sessions when they reconnect after the session manager upgrade.
 
 ## Configuration and security
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `WEB_TERMINAL_PORT` | `3120` | Loopback HTTP port for the web service |
-| `WEB_TERMINAL_MAX` | `8` | Maximum concurrent terminals per signed-in account session, enforced by the shell host |
+| `WEB_TERMINAL_MAX` | `8` | Maximum concurrent terminals per session, enforced by the shell host |
 | `WEB_TERMINAL_DATA` | `var/` in the checkout | Directory for the private socket and the `secrets/` directory |
 | `WEB_TERMINAL_USERNAME` | Prompted interactively | Account name for `npm run passwd` |
 | `WEB_TERMINAL_SYSTEM_USER` | Prompted interactively | Optional operating-system user for that account |
 
 For a custom data directory, use the same absolute path for both services
 and for `npm run passwd`. Keep the directory private to the service user.
-The `secrets/` directory contains the account database and the session
-signing key. If you change the web port, update the proxy target to match.
+The `secrets/` directory contains the account database, session catalog, and
+session signing key. If you change the web port, update the proxy target to
+match.
 
 By default, shells run as the service user and start in its home directory
 using `$SHELL` or `/bin/bash`. They use `TERM=xterm-256color` and a UTF-8

@@ -9,6 +9,7 @@ import { clientAddress, createTermApp, sameOrigin } from "../app.ts";
 import { Assets } from "../assets.ts";
 import { Auth, terminalOwners, Throttle } from "../auth.ts";
 import { Terminals } from "../terminal.ts";
+import { Workspaces } from "../workspaces.ts";
 
 const request = (remoteAddress: string, forwarded?: string) =>
   ({
@@ -76,7 +77,8 @@ test("Each login has its own shells, including when two browsers sign in as the 
     const auth = new Auth(dir);
     await auth.setAccount("a", "pa");
     await auth.setAccount("b", "pb");
-    const app = createTermApp({ auth, throttle: new Throttle(), terminals, assets: new Assets(dir) });
+    const workspaces = new Workspaces(dir);
+    const app = createTermApp({ auth, throttle: new Throttle(), terminals, assets: new Assets(dir), workspaces });
     const browser = () => {
       let cookie = "";
       const call = async (method: string, route: string, body?: unknown) => {
@@ -99,10 +101,10 @@ test("Each login has its own shells, including when two browsers sign in as the 
     const other = browser();
     const { call } = first;
 
-    assert.deepEqual((await call("POST", "session", { username: "a", password: "pa" })).data, { username: "a", accounts: ["a"] });
+    assert.deepEqual((await call("POST", "session", { username: "a", password: "pa" })).data.accounts, ["a"]);
     assert.equal((await call("POST", "terminals", { account: "b" })).status, 403);
     assert.equal((await call("POST", "session", { username: "b", password: "wrong" })).status, 401);
-    assert.deepEqual((await call("POST", "session", { username: "b", password: "pb" })).data, { username: "a", accounts: ["a", "b"] });
+    assert.deepEqual((await call("POST", "session", { username: "b", password: "pb" })).data.accounts, ["a", "b"]);
     const made = (await call("POST", "terminals", { account: "b", cols: 80, rows: 24 })).data;
     assert.equal(made.account, "b");
     assert.deepEqual((await call("GET", "terminals")).data.map((info: { id: string }) => info.id), [made.id]);
@@ -126,10 +128,40 @@ test("Each login has its own shells, including when two browsers sign in as the 
     assert.equal((await call("POST", "session", { username: "b", password: "pb" })).status, 200);
     assert.deepEqual(terminalOwners(auth.verify(first.cookie())!), terminalOwners(session));
 
+    const listed = (await other.call("GET", "workspaces")).data.workspaces;
+    assert.equal(listed.length, 2);
+    assert.ok(listed.some((entry: { id: string }) => entry.id === made.workspace));
+    const scoped = `?workspace=${made.workspace}`;
+    assert.deepEqual((await other.call("GET", `terminals${scoped}`)).data.map((info: { id: string }) => info.id), [made.id]);
+    assert.deepEqual((await other.call("GET", "terminals")).data, []);
+    const allowed = workspaces.select(auth.verify(other.cookie())!, [made.workspace]);
+    assert.deepEqual(terminalOwners({ ...session, accounts: allowed }), terminalOwners(session).slice(1));
+
+    const created = await other.call("POST", "workspaces", { account: "b", name: "Review" });
+    assert.equal(created.status, 201);
+    const workspace = created.data;
+    assert.equal((await call("PATCH", `workspaces/${workspace.id}`, { name: "Release" })).data.name, "Release");
+    const fileReload = new Workspaces(dir);
+    assert.equal(fileReload.find(auth.verify(other.cookie())!, workspace.id).name, "Release");
+    const inNew = await other.call("POST", `terminals?workspace=${workspace.id}`, { account: "b" });
+    assert.equal(inNew.data.workspace, workspace.id);
+
     // Signing out of b keeps a and hides b's shell from this browser without ending it.
-    assert.deepEqual((await call("DELETE", "session/b")).data, { username: "a", accounts: ["a"] });
+    assert.deepEqual((await call("DELETE", "session/b")).data.accounts, ["a"]);
     assert.deepEqual((await call("GET", "terminals")).data, []);
     assert.equal(terminals.list(terminalOwners(session)).length, 1);
+    assert.equal((await call("GET", `terminals${scoped}`)).status, 404);
+    assert.equal((await call("DELETE", `workspaces/${workspace.id}`)).status, 404);
+    assert.equal((await other.call("DELETE", `workspaces/${workspace.id}`)).status, 200);
+    assert.equal((await other.call("GET", `terminals?workspace=${workspace.id}`)).status, 404);
+    assert.deepEqual(terminals.list([`login:${workspace.id}:b`]), []);
+    assert.deepEqual((await other.call("GET", `terminals${scoped}`)).data.map((info: { id: string }) => info.id), [made.id]);
+    const otherSession = auth.verify(other.cookie())!;
+    const home = otherSession.accounts[0]!.loginId;
+    const removedHome = await other.call("DELETE", `workspaces/${home}`);
+    assert.equal(removedHome.status, 200);
+    assert.notEqual(removedHome.data.logins[0].id, home);
+    assert.equal((await other.call("GET", "session")).data.logins[0].id, removedHome.data.logins[0].id);
   } finally {
     terminals.close();
     fs.rmSync(dir, { recursive: true, force: true });

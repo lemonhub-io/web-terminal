@@ -1,13 +1,14 @@
 // The HTTP side: sign-in, the list of shells, and the built client.
 import type { HttpBindings } from "@hono/node-server";
 import type { IncomingMessage } from "node:http";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { errorMessage, logger } from "./log.ts";
 import type { Assets } from "./assets.ts";
-import { Auth, MAX_ACCOUNTS, terminalOwner, terminalOwners, type Session, type Throttle } from "./auth.ts";
+import { Auth, MAX_ACCOUNTS, terminalOwner, type Session, type SessionIdentity, type Throttle } from "./auth.ts";
 import { HttpError, statusOf } from "./http-error.ts";
 import type { TerminalInfo, TerminalOptions } from "./terminal.ts";
+import type { Workspaces } from "./workspaces.ts";
 
 const log = logger("term");
 
@@ -24,6 +25,7 @@ export interface TermServices {
   throttle: Throttle;
   terminals: TerminalStore;
   assets: Assets;
+  workspaces: Workspaces;
 }
 
 type Env = { Bindings: HttpBindings; Variables: { session: Session } };
@@ -72,14 +74,12 @@ const terminalOptions = z.object({
 });
 
 const terminalName = z.object({ name: z.string().max(200) });
+const workspaceName = z.object({ name: z.string().trim().min(1).max(60) });
 
-/** Who the page is signed in as. The first account is the one used on the sign-in page. */
-const sessionInfo = (session: Session) => ({ username: session.accounts[0]?.username ?? "", accounts: session.accounts.map((account) => account.username) });
-
-function publicTerminal(info: TerminalInfo, session: Session): TerminalInfo {
-  const account = session.accounts.find((entry) => terminalOwner(entry) === info.account);
+function publicTerminal(info: TerminalInfo, scopes: readonly SessionIdentity[]): TerminalInfo & { workspace: string } {
+  const account = scopes.find((entry) => terminalOwner(entry) === info.account);
   if (!account) throw new HttpError(404, "Terminal not found");
-  return { ...info, account: account.username };
+  return { ...info, account: account.username, workspace: account.loginId };
 }
 
 async function readCredentials(c: { req: { json: () => Promise<unknown> } }) {
@@ -88,9 +88,15 @@ async function readCredentials(c: { req: { json: () => Promise<unknown> } }) {
   return parsed.data;
 }
 
-export function createTermApp({ auth, throttle, terminals, assets }: TermServices) {
+export function createTermApp({ auth, throttle, terminals, assets, workspaces }: TermServices) {
   const app = new Hono<Env>();
   const api = new Hono<Env>();
+  const sessionInfo = (session: Session) => ({
+    username: session.accounts[0]?.username ?? "",
+    accounts: session.accounts.map((account) => account.username),
+    logins: workspaces.defaults(session),
+  });
+  const scopesFor = (c: Context<Env>) => workspaces.select(c.get("session"), c.req.queries("workspace") ?? []);
 
   app.use(async (c, next) => {
     await next();
@@ -163,29 +169,60 @@ export function createTermApp({ auth, throttle, terminals, assets }: TermService
     c.header("Set-Cookie", Auth.cookie(left.tokens));
     return c.json(sessionInfo(left));
   });
-  api.get("/terminals", async (c) => {
+  api.get("/workspaces", (c) => {
     const session = c.get("session");
-    const list = await terminals.list(terminalOwners(session));
-    return c.json(list.map((info) => publicTerminal(info, session)));
+    return c.json({ ...sessionInfo(session), workspaces: workspaces.list(session) });
+  });
+  api.post("/workspaces", async (c) => {
+    const body = workspaceName.extend({ account: credentials.shape.username }).safeParse(await c.req.json().catch(() => undefined));
+    if (!body.success) throw new HttpError(400, "Enter a session name and account");
+    return c.json(workspaces.create(c.get("session"), body.data.account, body.data.name), 201);
+  });
+  api.patch("/workspaces/:id", async (c) => {
+    const body = workspaceName.safeParse(await c.req.json().catch(() => undefined));
+    if (!body.success) throw new HttpError(400, "Enter a session name");
+    return c.json(workspaces.rename(c.get("session"), c.req.param("id"), body.data.name));
+  });
+  api.delete("/workspaces/:id", async (c) => {
+    const session = c.get("session");
+    await workspaces.run(session, c.req.param("id"), async (workspace) => {
+      const owners = [terminalOwner({ username: workspace.account, loginId: workspace.id })];
+      for (const { id } of await terminals.list(owners)) {
+        try {
+          await terminals.kill(id, owners);
+        } catch (error) {
+          if (statusOf(error) !== 404) throw error;
+        }
+      }
+      workspaces.remove(session, workspace.id);
+    });
+    return c.json({ ...sessionInfo(session), workspaces: workspaces.list(session) });
+  });
+  api.get("/terminals", async (c) => {
+    const scopes = scopesFor(c);
+    const list = await terminals.list(scopes.map(terminalOwner));
+    return c.json(list.map((info) => publicTerminal(info, scopes)));
   });
   api.post("/terminals", async (c) => {
     const options = terminalOptions.safeParse(await c.req.json().catch(() => ({})));
     const { account, ...size }: z.infer<typeof terminalOptions> = options.success ? options.data : {};
     const session = c.get("session");
-    const owner = account === undefined ? session.accounts[0] : session.accounts.find((entry) => entry.username === account);
+    const scopes = scopesFor(c);
+    const owner = account === undefined ? scopes[0] : scopes.find((entry) => entry.username === account);
     if (!owner) throw new HttpError(403, "Sign in to that account first");
-    const info = await terminals.create({ ...size, ...(owner.systemUser ? { systemUser: owner.systemUser } : {}) }, terminalOwner(owner));
-    return c.json(publicTerminal(info, session));
+    const info = await workspaces.run(session, owner.loginId, () =>
+      terminals.create({ ...size, ...(owner.systemUser ? { systemUser: owner.systemUser } : {}) }, terminalOwner(owner)));
+    return c.json(publicTerminal(info, scopes));
   });
   api.patch("/terminals/:id", async (c) => {
     const body = terminalName.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) throw new HttpError(400, "Give the terminal a name of up to 200 characters");
-    const session = c.get("session");
-    const info = await terminals.rename(c.req.param("id"), body.data.name, terminalOwners(session));
-    return c.json(publicTerminal(info, session));
+    const scopes = scopesFor(c);
+    const info = await terminals.rename(c.req.param("id"), body.data.name, scopes.map(terminalOwner));
+    return c.json(publicTerminal(info, scopes));
   });
   api.delete("/terminals/:id", async (c) => {
-    await terminals.kill(c.req.param("id"), terminalOwners(c.get("session")));
+    await terminals.kill(c.req.param("id"), scopesFor(c).map(terminalOwner));
     return c.json({ ok: true });
   });
 

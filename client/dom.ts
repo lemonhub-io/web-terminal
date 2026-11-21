@@ -66,6 +66,9 @@ const PATHS = {
   close: "M4 4l8 8M12 4l-8 8",
   copy: "M6 6h7v7H6zM10 3H3v7",
   select: "M3 5V3h5m3 0h2v2M3 11v2h2m3 0h5v-2M5 8h6",
+  sessions: "M3 3h8v7H3zM5 6l1.5 1.5L5 9m4-1h1m3-2v7H6",
+  edit: "m4 9 6.5-6.5 3 3L7 12l-4 1zM9 4l3 3",
+  trash: "M3 5h10M6 3h4m2 2-1 8H5L4 5m3 2v4m2-4v4",
   sliders: "M2 5h6M12 5h2M2 11h2M8 11h6M10 3v4M6 9v4",
 } as const;
 

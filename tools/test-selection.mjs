@@ -8,16 +8,22 @@ import { Assets } from "../server/assets.ts";
 
 const text = "SELECTIONCHECK";
 const line = `${text} EXTRA`;
-const id = "000000000000000000000001";
+const main = { id: "aaaaaaaaaaaaaaaa", account: "test", name: "Main", created: 0 };
+const review = { id: "bbbbbbbbbbbbbbbb", account: "test", name: "Review", created: 1 };
+const session = { username: "test", accounts: ["test"], logins: [{ account: "test", loginId: main.id, id: main.id }] };
+const reviewTerminal = "000000000000000000000002";
 const assets = new Assets("client/dist");
 const server = createServer(async (req, res) => {
-  if (req.url === "/api/session") {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  if (url.pathname === "/api/session" || url.pathname === "/api/workspaces") {
     res.setHeader("Content-Type", "application/json");
-    return res.end(JSON.stringify({ username: "test", accounts: ["test"] }));
+    return res.end(JSON.stringify({ ...session, workspaces: [main, review] }));
   }
-  if (req.url === "/api/terminals") {
+  if (url.pathname === "/api/terminals") {
+    const selected = url.searchParams.get("workspace") === review.id ? review : main;
+    const id = selected === review ? reviewTerminal : "000000000000000000000001";
     res.setHeader("Content-Type", "application/json");
-    return res.end(JSON.stringify([{ id, account: "test", title: "Shell", name: "", created: 0, clients: 1 }]));
+    return res.end(JSON.stringify([{ id, account: "test", workspace: selected.id, title: selected.name, name: "", created: 0, clients: 1 }]));
   }
   const file = assets.response(req.url ?? "/");
   res.writeHead(file.status, Object.fromEntries(file.headers));
@@ -26,11 +32,13 @@ const server = createServer(async (req, res) => {
 const sockets = new WebSocketServer({ server });
 const writes = [];
 let size;
-sockets.on("connection", (socket) => {
+sockets.on("connection", (socket, req) => {
+  const url = new URL(req.url, "http://localhost");
+  const inReview = url.pathname.endsWith(reviewTerminal) && url.searchParams.get("workspace") === review.id;
   socket.send(JSON.stringify({ type: "snapshot", cols: 80, rows: 24, data: line + "\x1b[?1000h\x1b[?1006h" }));
   socket.on("message", (data, binary) => {
     if (binary) writes.push(data.toString());
-    else size = JSON.parse(data.toString());
+    else if (inReview) size = JSON.parse(data.toString());
   });
 });
 
@@ -71,16 +79,6 @@ try {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
     return result.result.value;
   };
-  await send("Browser.grantPermissions", { origin, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
-  await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 750, deviceScaleFactor: 2, mobile: true });
-  await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
-  await send("Page.navigate", { url: origin });
-  const screen = 'document.querySelector(".xterm.enable-mouse-events .xterm-screen")';
-  await waitFor(() => evaluate(`Boolean(${screen})`), "Terminal did not enter mouse mode");
-  await waitFor(() => size?.cols, "Terminal resize did not reach the shell");
-  const { left, top, width, height } = await evaluate(`${screen}.getBoundingClientRect().toJSON()`);
-  const x = (col) => left + col * width / size.cols;
-  const y = top + height / size.rows / 2;
   const touch = (type, point) => send("Input.dispatchTouchEvent", { type, touchPoints: point ? [{ ...point, id: 1 }] : [] });
   const center = async (selector) => evaluate(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
@@ -95,6 +93,23 @@ try {
     await touch("touchStart", await center(selector));
     await touch("touchEnd");
   };
+  await send("Browser.grantPermissions", { origin, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
+  await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 750, deviceScaleFactor: 2, mobile: true });
+  await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
+  await send("Page.navigate", { url: origin });
+  await waitFor(() => evaluate('Boolean(document.querySelector(".xterm.enable-mouse-events"))'), "Initial session did not open");
+  await tap('button[aria-label="Sessions"]');
+  const reviewRow = '.workspace-open[title="Review"]';
+  await waitFor(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(reviewRow)}))`), "Session list did not show Review");
+  await tap(reviewRow);
+  await waitFor(() => size?.cols, "Review did not open its terminal in the selected session");
+  assert.equal(await evaluate(`sessionStorage.getItem("web-terminal:session:${main.id}")`), review.id);
+  assert.equal(await evaluate('document.querySelector(".tab-label[aria-selected=true]").textContent'), "Review");
+  const screen = 'document.querySelector(".xterm.enable-mouse-events .xterm-screen")';
+  await waitFor(() => evaluate(`Boolean(${screen})`), "Terminal did not enter mouse mode");
+  const { left, top, width, height } = await evaluate(`${screen}.getBoundingClientRect().toJSON()`);
+  const x = (col) => left + col * width / size.cols;
+  const y = top + height / size.rows / 2;
   const copy = ".touch-actions-row button:first-of-type";
   const clipboard = () => evaluate("navigator.clipboard.readText()");
   const copyText = async (expected) => {
