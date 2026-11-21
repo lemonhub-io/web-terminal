@@ -17,7 +17,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./fonts.css";
 import "./style.css";
 import type { Activity } from "./activity.ts";
-import { afterPointer, h, icon, recall, reconcile, remember } from "./dom.ts";
+import { afterPointer, h, icon, onTap, recall, reconcile, remember } from "./dom.ts";
 import { language, t } from "./i18n.ts";
 import { applyModifiers, buildKeyBar } from "./keys.ts";
 import { activeTheme, buildPanel, fontFamily, onSettingsChange, settings } from "./settings.ts";
@@ -382,8 +382,9 @@ async function showConsole(me: SessionInfo) {
   touchSelectButton = h("button", {
     class: "tool touch-select-button",
     attrs: { type: "button", "aria-label": t("selectText"), title: t("selectText"), "aria-pressed": "false" },
-    on: { pointerdown: keepTyping, click: () => current()?.toggleTouchSelection() },
+    on: { pointerdown: keepTyping },
   }, icon("select"));
+  onTap(touchSelectButton, () => current()?.toggleTouchSelection());
   touchSelectButton.hidden = true;
   const root = h(
     "div",

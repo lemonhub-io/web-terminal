@@ -1,5 +1,5 @@
 import type { IBuffer, Terminal } from "@xterm/xterm";
-import { h } from "./dom.ts";
+import { h, onTap } from "./dom.ts";
 import { t } from "./i18n.ts";
 
 type Range = { start: number; end: number };
@@ -24,10 +24,14 @@ export class TouchSelection {
 
   constructor(private readonly term: Terminal, private readonly mount: HTMLElement, private readonly changed: () => void) {
     this.screen = term.element!.querySelector<HTMLElement>(".xterm-screen")!;
-    const action = (label: string, click: () => void) => h("button", {
-      text: label, attrs: { type: "button" },
-      on: { pointerdown: (event) => event.preventDefault(), click },
-    });
+    const action = (label: string, run: () => void) => {
+      const button = h("button", {
+        text: label, attrs: { type: "button" },
+        on: { pointerdown: (event) => event.preventDefault() },
+      });
+      onTap(button, run);
+      return button;
+    };
     this.copyButton = action(t("copy"), () => void this.copy());
     this.hint = h("span", { attrs: { role: "status" } });
     this.manual = h("textarea", { attrs: { readonly: "", rows: "3", "aria-label": t("selectedText") } });

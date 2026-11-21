@@ -94,7 +94,18 @@ try {
   const clipboard = () => evaluate("navigator.clipboard.readText()");
   const copyText = async (expected) => {
     await tap(copy);
-    await waitFor(async () => await clipboard() === expected, `Clipboard did not receive ${expected}`);
+    try {
+      await waitFor(async () => await clipboard() === expected, `Clipboard did not receive ${expected}`);
+    } catch (error) {
+      const { status, manual, hit } = await evaluate(`(() => {
+        const button = document.querySelector(${JSON.stringify(copy)});
+        const { x, y, width, height } = button.getBoundingClientRect();
+        return { status: document.querySelector(".touch-actions-row span").textContent,
+          manual: document.querySelector(".touch-actions textarea").hidden,
+          hit: button.contains(document.elementFromPoint(x + width / 2, y + height / 2)) };
+      })()`);
+      throw new Error(`${error.message}; received ${JSON.stringify(await clipboard())}; status ${JSON.stringify(status)}; manual hidden ${manual}; copy target ${hit}`);
+    }
   };
 
   await touch("touchStart", { x: x(4.5), y });

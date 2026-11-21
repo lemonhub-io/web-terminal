@@ -50,6 +50,17 @@ export function afterPointer(action: () => void) {
   else action();
 }
 
+/** Keep a touch action inside the browser's user gesture even if focus stays in the terminal. */
+export function onTap(button: HTMLButtonElement, action: () => void) {
+  button.addEventListener("click", action);
+  button.addEventListener("touchend", (event) => {
+    const touch = event.changedTouches[0];
+    if (!touch || !event.cancelable || !button.contains(document.elementFromPoint(touch.clientX, touch.clientY))) return;
+    event.preventDefault();
+    action();
+  }, { passive: false });
+}
+
 const PATHS = {
   plus: "M8 3v10M3 8h10",
   close: "M4 4l8 8M12 4l-8 8",
