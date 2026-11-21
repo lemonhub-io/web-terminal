@@ -1,7 +1,7 @@
 # web-terminal
 
 Run real login shells in a browser, with persistent tabs, automatic reconnect,
-and a key bar for phones. The client uses TypeScript and
+remote file management, and a key bar for phones. The client uses TypeScript and
 [xterm.js](https://xtermjs.org/). A Node.js web service handles sign-in and
 serves the client. A separate shell host owns the terminals and their
 scrollback so they can outlive the browser and web service.
@@ -87,16 +87,22 @@ installation can add the terminal to the home screen.
 
 ### Remote files
 
-Open **Files** in the toolbar. The file manager starts in the selected
-account's home directory. Open a folder, go to its parent, or enter an absolute
-path. You can show hidden files, create folders, upload several files, download
-files, and rename or delete items. Click a file name to download it. Replacing
-an existing upload or deleting an item asks for confirmation. Deleting a
-folder removes its contents as well.
+Open **Files** in the toolbar. The file manager starts at the selected
+account's home directory and remembers the last folder for each account
+while the page is open. Use the account selector to work with another
+signed-in account. Choose **Done** to return to the terminal.
 
-Use the account selector to manage files for another signed-in account. File
-operations run as the same operating-system user as that account's shells.
-Sessions under the same account share the filesystem visible to that user.
+| Task | What to do |
+|---|---|
+| Navigate | Open a folder, use **Home folder** or **Parent folder**, or enter an absolute path and choose **Go** |
+| Find an item | Use **Show hidden files** for dotfiles, **Load more** for large folders, and **Refresh files** to see changes made elsewhere |
+| Upload | Choose **Upload files** and select one or more files. Uploads run in order. Choose **Replace** or **Skip** if a name already exists |
+| Download | Select a regular file by name to save it as a browser download |
+| Organize | Use **New folder**, or use the rename or delete action beside an item. Confirm deletion to permanently remove the item and, for a folder, its contents |
+
+File operations run as the same operating-system user as the account's
+shells. Home is the starting location. You can enter other paths that this
+user can access. Sessions under the same account share that filesystem.
 
 ## Deployment
 
@@ -130,9 +136,9 @@ supplies the client address for sign-in throttling.
 The [Build workflow](https://github.com/lemonhub-io/web-terminal/actions/workflows/build.yml)
 runs on pushes to `main`, pull requests, and manual dispatch. It builds the
 client from the lockfile and checks session switching, touch selection,
-clipboard behavior, and file navigation in Chromium. The `web-terminal-client` artifact
-contains the contents of `client/dist/`. Use an artifact from a successful
-run for the revision you are deploying.
+clipboard behavior, and file navigation in Chromium. The
+`web-terminal-client` artifact contains the contents of `client/dist/`.
+Use an artifact from a successful run for the revision you are deploying.
 
 From the checkout on the server, replace `RUN_ID` with that run’s ID. An
 authenticated GitHub CLI extracts the named artifact into the staging directory.
@@ -167,6 +173,11 @@ and reloads its own service. Install the regular runtime dependencies with
 | Web server code | `systemctl --user restart web-terminal` | Browsers reconnect to the running shells |
 | Shell host code or configuration | `systemctl --user restart web-terminal-host` | Ends every shell owned by the host |
 
+To upgrade to a release with file manager changes on both sides, update the
+server checkout and install the client artifact for that revision. Restart
+`web-terminal` to load the server code and client together. File requests
+run in the web service, and the shell host keeps its existing terminals.
+
 When upgrading from versions that used account-wide terminal tabs, save work
 and close old tabs before deploying. The upgraded app starts with a
 session-scoped terminal list. Legacy shells in an existing host remain
@@ -197,6 +208,20 @@ with `sudo -n` when it differs from the service user. The service user needs
 the corresponding passwordless sudo permission. Filesystem and process
 access follow the permissions of the account’s operating-system user.
 
+For an account bound to a different system user, the web service launches
+the file worker with `sudo -n -u` as that user. Ensure the user can run the
+configured Node.js executable and traverse the checkout to read the worker.
+With restricted sudo rules, include the file worker command alongside the
+existing shell launcher. A file service startup error can indicate a sudo
+or executable access problem. An access denied error indicates an operating
+system permission issue on the requested path.
+
+Uploads are streamed to a private temporary file in the destination folder.
+Installing a new file uses a hard link so an existing name stays protected.
+An explicitly approved replacement uses a rename once the upload completes.
+Available disk space, filesystem capabilities, and proxy limits apply to
+transfers.
+
 Passwords are stored as scrypt hashes. Each account token is signed and
 stored in a Secure, HttpOnly cookie with a rolling 90-day lifetime. Changing
 a password invalidates that account’s tokens on subsequent API requests and
@@ -225,8 +250,9 @@ and the matching ChromeDriver.
 
 | Path | Contents |
 |---|---|
-| `client/` | xterm.js browser UI, tabs, themes, settings, clipboard, and touch input |
-| `server/` | Authentication, HTTP and WebSocket API, shell host, and server tests |
+| `client/` | Terminal UI, session picker, file manager, themes, settings, clipboard, and touch input |
+| `server/` | Auth, HTTP and WebSocket API, shell host, file worker, and server tests |
+| `shared/` | File manager request and response types |
 | `deploy/` | Example systemd user units and Caddy configuration |
 | `tools/` | Browser check and fallback font generation |
 | `.github/workflows/build.yml` | Client build, browser check, and artifact upload |

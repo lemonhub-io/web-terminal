@@ -46,9 +46,25 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - 控件不要随状态更新整块重建。重命名失焦保存不得抢走下一次点击的焦点。按键栏修饰键只处理用户输入，不处理终端的查询应答。
 - 不要另起一个实例换端口再切反代来"无中断上线"：标签只存在各自宿主的内存里，切过去旧标签全看不见。
 
+## 文件管理协议
+
+文件请求位于 `/api/files` 下，使用同一个登录 cookie。每次请求都按 `account` 从当前已登录账号中取系统用户。写入请求经过现有的同源校验。操作路径和权限由网页服务启动的文件子进程处理。
+
+| 请求 | 参数和结果 |
+|---|---|
+| `GET /api/files` | 查询参数为 `account`、可选绝对 `path`、`offset` 和 `hidden=1`。省略路径时列出该系统用户的主目录，每页最多 160 项 |
+| `GET /api/files/download` | 查询参数为 `account`、目录 `path` 和文件 `name`。普通文件以二进制附件流返回 |
+| `POST /api/files/upload` | 查询参数为 `account`、目录 `path`、文件 `name` 和字节数 `size`。请求体为原始文件数据，用户确认替换后加 `replace=1` |
+| `POST /api/files/folders` | JSON 请求体带 `account`、目录 `path` 和新目录 `name` |
+| `PATCH /api/files/item` | JSON 请求体带 `account`、目录 `path`、`name` 和新名称 `to` |
+| `DELETE /api/files/item` | JSON 请求体带 `account`、目录 `path` 和 `name`。目录删除会递归处理内容 |
+
+文件子进程先在标准输出写一行 JSON，下载时在后面接文件字节。上传先写入同目录的私有临时文件，确认收到全部字节后用硬链接安装新文件，得到明确的替换请求时用重命名覆盖。同名上传返回 409，由客户端提供替换和跳过选项。协议类型在 `shared/files.ts`。
+
 ## 发布和验证
 
-- 公开仓库是 `lemonhub-io/web-terminal`。GitHub Actions 从锁文件构建并上传 `web-terminal-client`，再用手机尺寸的 Chromium 触屏模拟验证长按、手柄拖动、复制和手动复制路径。
+- 公开仓库是 `lemonhub-io/web-terminal`。GitHub Actions 从锁文件构建并上传 `web-terminal-client`，再用手机尺寸的 Chromium 触屏模拟验证会话切换、触屏选取与复制、文件目录导航和下载链接。
+- 文件接口的定向测试是 `node --test --test-concurrency=1 server/test/files.test.ts`，覆盖账号鉴权、文件操作、二进制往返和同名上传保护。
 - 客户端发布使用对应提交的成功构建产物，按 [README 的发布流程](README.md#client-builds-from-github-actions) 替换 `client/dist` 并 reload 网页服务。浏览器在下次加载页面时取得新资源。
 - 改网页服务端时 restart 网页服务，浏览器会重连接到现有 shell。改宿主代码或配置时才重启宿主。宿主重启结束所有 shell，操作前先向使用者确认。
 - 验证针对改动可能引入的具体问题。字体、符号、布局和触屏交互用对应的浏览器场景。纯文档改动直接审阅内容。
