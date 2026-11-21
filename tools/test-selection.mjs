@@ -100,11 +100,12 @@ try {
       const { status, manual, hit } = await evaluate(`(() => {
         const button = document.querySelector(${JSON.stringify(copy)});
         const { x, y, width, height } = button.getBoundingClientRect();
+        const target = document.elementFromPoint(x + width / 2, y + height / 2);
         return { status: document.querySelector(".touch-actions-row span").textContent,
           manual: document.querySelector(".touch-actions textarea").hidden,
-          hit: button.contains(document.elementFromPoint(x + width / 2, y + height / 2)) };
+          hit: { target: target?.tagName, className: target?.className, x, y, width, height, hidden: button.hidden } };
       })()`);
-      throw new Error(`${error.message}; received ${JSON.stringify(await clipboard())}; status ${JSON.stringify(status)}; manual hidden ${manual}; copy target ${hit}`);
+      throw new Error(`${error.message}; received ${JSON.stringify(await clipboard())}; status ${JSON.stringify(status)}; manual hidden ${manual}; copy target ${JSON.stringify(hit)}`);
     }
   };
 

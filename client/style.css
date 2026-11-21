@@ -627,6 +627,7 @@ select {
   touch-action: pinch-zoom;
   overscroll-behavior: contain;
   -webkit-touch-callout: none;
+  isolation: isolate;
 }
 
 .touch-selection {
@@ -661,18 +662,13 @@ select {
 .touch-actions {
   position: absolute;
   right: 8px;
-  bottom: 8px;
+  top: 8px;
   max-width: calc(100% - 16px);
   padding: 2px;
   pointer-events: auto;
   border-radius: 12px;
   background: var(--raised);
   box-shadow: 0 3px 14px var(--shade);
-}
-
-.touch-selection.dock-top .touch-actions {
-  top: 8px;
-  bottom: auto;
 }
 
 .touch-actions-row {

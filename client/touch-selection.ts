@@ -11,6 +11,7 @@ const words = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefine
 export class TouchSelection {
   private readonly screen: HTMLElement;
   private readonly layer: HTMLElement;
+  private readonly actions: HTMLElement;
   private readonly copyButton: HTMLButtonElement;
   private readonly hint: HTMLElement;
   private readonly manual: HTMLTextAreaElement;
@@ -37,9 +38,9 @@ export class TouchSelection {
     this.manual = h("textarea", { attrs: { readonly: "", rows: "3", "aria-label": t("selectedText") } });
     this.manual.hidden = true;
     this.handles = { start: this.makeHandle("start"), end: this.makeHandle("end") };
-    this.layer = h("div", { class: "touch-selection" }, this.handles.start, this.handles.end,
-      h("div", { class: "touch-actions" },
-        this.manual, h("div", { class: "touch-actions-row" }, this.hint, this.copyButton, action(t("done"), () => this.close()))));
+    this.actions = h("div", { class: "touch-actions" },
+      this.manual, h("div", { class: "touch-actions-row" }, this.hint, this.copyButton, action(t("done"), () => this.close())));
+    this.layer = h("div", { class: "touch-selection" }, this.handles.start, this.handles.end, this.actions);
     this.layer.hidden = true;
     mount.append(this.layer);
     term.onRender(() => this.paintHandles());
@@ -66,7 +67,7 @@ export class TouchSelection {
   close() {
     if (!this.active) return;
     this.layer.hidden = true;
-    this.layer.classList.remove("dock-top");
+    this.actions.style.top = "";
     this.manual.hidden = true;
     this.manual.value = "";
     this.range = this.anchor = this.handle = undefined;
@@ -201,7 +202,17 @@ export class TouchSelection {
       handle.style.left = `${Math.max(12, Math.min(mount.width - 12, x - mount.left + offset))}px`;
       handle.style.top = `${Math.max(0, Math.min(mount.height - 24, y - mount.top + screen.height / this.term.rows / 2))}px`;
     }
-    if (range && !this.point) this.layer.classList.toggle("dock-top", this.position(range.end, "end", screen).y > mount.bottom - 72);
+    if (range && !this.point) {
+      const end = this.position(range.end, "end", screen).y;
+      const start = this.position(range.start, "start", screen).y;
+      const height = this.actions.offsetHeight;
+      const viewport = window.visualViewport;
+      const bottom = Math.min(mount.bottom, viewport ? viewport.offsetTop + viewport.height : window.innerHeight);
+      const below = end + 40;
+      const above = start - height - 16;
+      const top = below + height + 8 <= bottom ? below : above;
+      this.actions.style.top = `${Math.max(8, Math.min(bottom - mount.top - height - 8, top - mount.top))}px`;
+    }
   }
 
   private drag(point: Point) {
@@ -267,6 +278,7 @@ export class TouchSelection {
       this.manual.value = text;
       this.manual.hidden = false;
       this.hint.textContent = t("manualCopy");
+      this.paintHandles();
       this.manual.focus({ preventScroll: true });
       this.manual.select();
     }
