@@ -17,7 +17,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - `server/host.ts` shell 宿主，单独的进程和 systemd 单元（`web-terminal-host`），持有全部 shell。网页服务经数据目录里的 Unix 套接字（`var/host.sock`）调它：HTTP 管列表、新建、改名、关闭，每个浏览器连接对应一条到宿主的 WebSocket，`server/host-client.ts` 原样转发帧。网页服务重启不会结束 shell，浏览器重连后拿到新快照。
 - `server/terminal.ts` shell 会话，跑在宿主里。每个会话有一份无头 xterm 镜像，浏览器接入时发一帧 JSON 快照（屏幕、回滚、光标、模式），之后才是二进制实时输出。不要退回成原始字节回放：那会从转义序列中间开始、丢掉备用屏和鼠标模式，还会让旧的查询序列被重复应答。
 - `server/app.ts` 登录和终端管理 API。`server/main.ts` 校验 WebSocket 握手并交给宿主。`server/auth.ts` 管理 scrypt 密码和签名 cookie。`server/assets.ts` 预压缩并提供已构建的客户端。
-- `server/workspaces.ts` 保存按账号归属的会话目录，同一账号的所有登录看到同一份。每个账号有一个默认会话，新 shell 的归属键就是账号名，会话出现之前开的 shell 也因此留在这里；上一版按登录分开的默认会话在载入时并进来（`merged`），旧 id 仍指向它。其他会话的归属键是 `login:<会话 id>:<账号>`。创建终端和删除会话按会话串行处理。
+- `server/workspaces.ts` 保存按账号归属的会话目录，同一账号的所有登录看到同一份。每个账号有一个默认会话，新 shell 的归属键就是账号名，会话出现之前开的 shell 也因此留在这里；上一版按登录分开的默认会话在载入时并进来（`merged`），旧 id 仍指向它。其他会话的归属键是 `login:<会话 id>:<账号>`。宿主不能改 shell 的归属，要把 shell 转给别的账号，就停掉网页服务，在 `workspaces.json` 里给接收方的会话写 `keys`（第一个用于新 shell，全部都显示），并给原账号换一个不含这些键的默认会话。创建终端和删除会话按会话串行处理。
 - `server/file-routes.ts` 校验会话与账号后发送文件操作。`server/files.ts` 以对应 shell 用户的身份启动 `server/file-worker.ts`。上传和下载通过流传输，上传写完才在目标目录发布文件。
 - `client/shell.ts` 一个标签页：xterm、WebGL 渲染、键盘处理、重连。页面打开时所有标签都连上（后台标签才能报状态），切到后台时不销毁，也不参与尺寸计算。
 - `client/activity.ts` 后台标签的状态：运行中（转圈）、完成（强调色点）、等你确认（会呼吸的红点）。依据是 OSC 9;4 进度、通知（OSC 9/777/99、响铃）和输出节奏：持续输出算运行，停下 3 秒算结束，单次重绘（tmux 时钟）不算；结束后看屏幕末尾有没有各家 agent 的确认提示，来区分完成和等你。只在客户端做，不碰宿主。

@@ -22,6 +22,9 @@ interface Workspace extends WorkspaceInfo {
   merged?: string[];
   /** Rows saved while each login had its own default; folded in on load. */
   home?: string;
+  /** Host owner keys set by hand when shells move to another account: the first
+      one for new shells, all of them shown here. Overrides the keys above. */
+  keys?: string[];
 }
 
 /** One account as a request reaches it: the workspace in use and its host owner keys. */
@@ -36,8 +39,8 @@ export interface Scope extends SessionIdentity {
 const publicInfo = ({ id, account, name, created }: Workspace): WorkspaceInfo => ({ id, account, name, created });
 const nextId = () => randomBytes(12).toString("base64url");
 const keyOf = (id: string, account: string) => `login:${id}:${account}`;
-const ownerOf = (row: Workspace) => row.default ? row.account : keyOf(row.id, row.account);
-const ownersOf = (row: Workspace) =>
+const ownerOf = (row: Workspace) => row.keys?.[0] ?? (row.default ? row.account : keyOf(row.id, row.account));
+const ownersOf = (row: Workspace) => row.keys?.length ? row.keys :
   row.default ? [row.account, ...(row.merged ?? []).map((id) => keyOf(id, row.account))] : [keyOf(row.id, row.account)];
 
 /** Folds the per-login defaults of each account into one shared default. */
