@@ -64,15 +64,15 @@ export function onTap(button: HTMLButtonElement, action: () => void) {
 const PATHS = {
   plus: "M8 3v10M3 8h10",
   close: "M4 4l8 8M12 4l-8 8",
-  copy: "M6 6h7v7H6zM10 3H3v7",
+  copy: "M7 5.5h5A1.5 1.5 0 0 1 13.5 7v5a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 12V7A1.5 1.5 0 0 1 7 5.5zM10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5",
   select: "M3 5V3h5m3 0h2v2M3 11v2h2m3 0h5v-2M5 8h6",
-  sessions: "M3 3h8v7H3zM5 6l1.5 1.5L5 9m4-1h1m3-2v7H6",
-  edit: "m4 9 6.5-6.5 3 3L7 12l-4 1zM9 4l3 3",
-  trash: "M3 5h10M6 3h4m2 2-1 8H5L4 5m3 2v4m2-4v4",
-  folder: "M2.5 4h4l1.5 2h5.5v6h-11z",
-  file: "M4 2.5h5l3 3.5v7.5H4zM9 3v3h3",
+  sessions: "M8 3.25 13.5 6 8 8.75 2.5 6zM2.5 9.5 8 12.25l5.5-2.75",
+  edit: "M4 10 10.25 3.75a1.41 1.41 0 0 1 2 2L6 12l-2.75.75zM9 5l2 2",
+  trash: "M3 4.5h10M6.25 4.5V3.5a1 1 0 0 1 1-1h1.5a1 1 0 0 1 1 1v1M4.5 4.5l.6 7.6a1.5 1.5 0 0 0 1.5 1.4h2.8a1.5 1.5 0 0 0 1.5-1.4l.6-7.6",
+  folder: "M2.5 4.5A1.5 1.5 0 0 1 4 3h2.4l1.5 1.5H12A1.5 1.5 0 0 1 13.5 6v5.5A1.5 1.5 0 0 1 12 13H4a1.5 1.5 0 0 1-1.5-1.5z",
+  file: "M5 2.5h4l3.5 3.5v6A1.5 1.5 0 0 1 11 13.5H5A1.5 1.5 0 0 1 3.5 12V4A1.5 1.5 0 0 1 5 2.5zM9 2.5V5a1 1 0 0 0 1 1h2.5",
   link: "M7 5l1.5-1.5a2.1 2.1 0 0 1 3 3L10 8M9 11l-1.5 1.5a2.1 2.1 0 0 1-3-3L6 8m0 2 4-4",
-  home: "m2.5 7 5.5-4.5L13.5 7M4 6.5v6.5h8V6.5M7 13V9h2v4",
+  home: "M2.5 7.25 8 2.75l5.5 4.5M4 6.25V12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V6.25M6.75 13v-3h2.5v3",
   up: "m4 7 4-4 4 4M8 3v10",
   refresh: "M12.5 6.5a4.6 4.6 0 1 0 .3 3.1M12.5 3v3.5H9",
   sliders: "M2 5h6M12 5h2M2 11h2M8 11h6M10 3v4M6 9v4",
@@ -91,6 +91,7 @@ export function icon(name: keyof typeof PATHS): SVGSVGElement {
   path.setAttribute("stroke", "currentColor");
   path.setAttribute("stroke-width", "1.5");
   path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
   svg.append(path);
   return svg;
 }
