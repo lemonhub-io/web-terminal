@@ -1,6 +1,8 @@
 import type { Terminal } from "@xterm/xterm";
 
-/** Lets xterm select text on a plain drag even when a program requests mouse reports. */
+/** Lets xterm select text on a plain drag even when a program requests mouse reports.
+    Programs that report every move (1003, e.g. Claude Code) keep the drag and select on
+    their own: there the next hover report counts as input and clears xterm's selection. */
 export class TextSelection {
   private gesture?: AbortController;
 
@@ -8,7 +10,7 @@ export class TextSelection {
     const screen = term.element!.querySelector<HTMLElement>(".xterm-screen")!;
     mount.addEventListener("mousedown", (down) => {
       if (!down.isTrusted || down.button !== 0 || down.shiftKey || down.altKey || down.ctrlKey || down.metaKey ||
-          term.modes.mouseTrackingMode === "none" || !(down.target instanceof Node) || !screen.contains(down.target)) return;
+          term.modes.mouseTrackingMode === "none" || term.modes.mouseTrackingMode === "any" || !(down.target instanceof Node) || !screen.contains(down.target)) return;
 
       // Keep clicks for the program. Only choose text selection once the pointer starts dragging.
       down.preventDefault();

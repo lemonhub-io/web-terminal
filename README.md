@@ -55,7 +55,10 @@ printf '%s\n' "$PASSWORD" | WEB_TERMINAL_USERNAME=alice npm run passwd
 ### Text selection and clipboard
 
 - **Mouse:** Drag to select text, including in programs with mouse tracking
-  such as tmux. A plain click and the wheel still reach the program.
+  such as tmux. A plain click and the wheel still reach the program. Programs
+  that report every mouse move (like Claude Code's full mouse mode) keep the
+  drag and select on their own; Shift-drag (Option-drag on a Mac) still selects
+  terminal text there.
   Use the copy button or your usual clipboard shortcut.
 - **Touch:** Hold a word briefly to select it, or tap **Select text** in the
   toolbar and drag across the text. After lifting your finger, drag either
