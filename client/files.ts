@@ -63,15 +63,24 @@ export function buildFilesPanel(actions: Actions) {
   const tool = (name: Parameters<typeof icon>[0], label: string, click: () => void) => h("button", {
     class: "tool", attrs: { type: "button", title: label, "aria-label": label }, on: { click },
   }, icon(name));
-  const accountSelect = h("select", { attrs: { "aria-label": t("username") }, on: {
-    change: () => {
-      ({ account, user } = targets[Number(accountSelect.value)] ?? { account, user });
-      page = undefined;
-      edit = undefined;
-      paint();
-      void browse(folders.get(key()));
-    },
-  } });
+  /** Who the files are read as, in the same sliding control the settings use. */
+  const picker = h("div", { class: "segs", attrs: { role: "group", "aria-label": t("systemUser") } });
+  const choose = (index: number) => {
+    const target = targets[index];
+    if (!target || (target.account === account && target.user === user)) return;
+    ({ account, user } = target);
+    page = undefined;
+    edit = undefined;
+    paintPicker();
+    paint();
+    void browse(folders.get(key()));
+  };
+  function paintPicker() {
+    const at = Math.max(0, targets.findIndex((target) => target.account === account && target.user === user));
+    picker.style.setProperty("--n", String(targets.length));
+    picker.style.setProperty("--i", String(at));
+    for (const [index, seg] of [...picker.children].entries()) seg.setAttribute("aria-pressed", String(index === at));
+  }
   const folder = button(t("newFolder"), () => {
     edit = { kind: "create" };
     draft = "";
@@ -110,7 +119,7 @@ export function buildFilesPanel(actions: Actions) {
       else actions.close();
     } },
   },
-  h("div", { class: "workspace-head file-head" }, h("h2", { text: t("files") }), accountSelect, folder, addFiles, button(t("done"), actions.close)),
+  h("div", { class: "workspace-head file-head" }, h("h2", { text: t("files") }), picker, folder, addFiles),
   h("form", { class: "file-address", on: {
     submit: (event) => {
       event.preventDefault();
@@ -286,7 +295,8 @@ export function buildFilesPanel(actions: Actions) {
     if (edit?.kind === "create") rows.unshift(form(edit));
     body.replaceChildren(...rows);
     table.hidden = !rows.length;
-    accountSelect.disabled = address.disabled = go.disabled = toggler.disabled = disabled;
+    for (const seg of picker.children) (seg as HTMLButtonElement).disabled = disabled;
+    address.disabled = go.disabled = toggler.disabled = disabled;
     folder.disabled = addFiles.disabled = disabled || !page;
     home.disabled = reload.disabled = disabled;
     up.disabled = disabled || !page || page.path === "/";
@@ -321,12 +331,14 @@ export function buildFilesPanel(actions: Actions) {
         : exact >= 0 ? exact
         : Math.max(0, targets.findIndex((target) => target.account === owner));
       ({ account, user } = targets[at] ?? { account: "", user: "" });
-      accountSelect.replaceChildren(...targets.map((target, index) => h("option", {
+      picker.replaceChildren(...targets.map((target, index) => h("button", {
+        class: "seg",
         text: target.user ? accounts.length > 1 ? `${target.account} · ${target.user}` : target.user : target.account,
-        attrs: { value: String(index) },
+        attrs: { type: "button" },
+        on: { click: () => choose(index) },
       })));
-      accountSelect.value = String(Math.max(0, at));
-      accountSelect.hidden = targets.length < 2;
+      picker.hidden = targets.length < 2;
+      paintPicker();
       edit = undefined;
       element.hidden = false;
       element.focus({ preventScroll: true });
@@ -335,6 +347,11 @@ export function buildFilesPanel(actions: Actions) {
         page = undefined;
         void browse(folders.get(key()));
       }
+    },
+    /** Shows the panel again as it was left. */
+    reveal() {
+      element.hidden = false;
+      element.focus({ preventScroll: true });
     },
     dispose() {
       disposed = true;

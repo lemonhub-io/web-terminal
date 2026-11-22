@@ -85,10 +85,12 @@ installation can add the terminal to the home screen.
 
 ### Remote files
 
-Open **Files** in the toolbar. The file manager starts at the selected
-account's home directory and remembers the last folder for each account
-while the page is open. Use the account selector to work with another
-signed-in account. Choose **Done** to return to the terminal.
+Open **Files** in the toolbar. The file manager opens as a tab after the
+terminal tabs, starts at the selected account's home directory, and remembers
+the last folder for each account while the page is open. Switching to a
+terminal tab and back keeps the folder. When there is more than one account
+or system user to choose from, pick one at the top. Close the tab with its
+close button.
 
 | Task | What to do |
 |---|---|
@@ -134,8 +136,7 @@ supplies the client address for sign-in throttling.
 
 The [Build workflow](https://github.com/lemonhub-io/web-terminal/actions/workflows/build.yml)
 runs on pushes to `main`, pull requests, and manual dispatch. It builds the
-client from the lockfile, typechecks it, and checks touch selection,
-clipboard behavior, and file navigation in Chromium. The
+client from the lockfile and typechecks it. The
 `web-terminal-client` artifact contains the contents of `client/dist/`.
 Use an artifact from a successful run for the revision you are deploying.
 
@@ -245,7 +246,6 @@ least operating-system privilege needed for their work.
 npm run check             # Type-check the server and client
 npm test                  # Run server unit tests
 npm run build             # Rebuild client/dist
-node tools/test-selection.mjs  # Check the built client with ChromeDriver
 ```
 
 On this project’s deployment server, use the GitHub Actions artifact for the

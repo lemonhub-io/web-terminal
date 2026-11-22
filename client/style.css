@@ -388,6 +388,17 @@ select {
   white-space: nowrap;
 }
 
+.files-tab .tab-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: inherit;
+}
+
+.files-tab .tab-label svg {
+  flex: none;
+}
+
 /* With more than one account signed in, shells of the others carry its name. */
 .tab-account {
   display: inline-block;
@@ -831,13 +842,8 @@ select {
   font-size: 18px;
 }
 
-.workspace-head select {
-  min-width: 0;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: 7px;
-  background: var(--raised);
-  font-size: 16px;
+.workspace-head .segs[hidden] {
+  display: none;
 }
 
 .file-head,

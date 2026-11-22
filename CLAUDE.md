@@ -8,7 +8,6 @@
 - `npm test` 服务端单元测试
 - `npm run build` 打包客户端到 `client/dist`
 - `npm start` 启动，只监听 127.0.0.1
-- `node tools/test-selection.mjs` 用 ChromeDriver 验证已构建的客户端
 
 Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语法，导入要带 `.ts` 后缀。
 
@@ -27,7 +26,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - `client/touch-selection.ts` 用 xterm 公共缓冲区和选区 API 实现长按选词、手柄、贴边滚动和复制。触屏操作条保持在选区附近，剪贴板写入失败时显示原生可选文本。保持触点事件与写入剪贴板在同一用户手势里。
 - `client/themes.ts` 主题。调色板必须如实：黑是深色、白是浅色，浅色主题也一样。可读性靠 `minimumContrastRatio`，不靠把颜色对调。
 - `client/settings.ts` 设置的存取和原生 dialog 面板。`client/i18n.ts` 中英文案。
-- `client/files.ts` 是终端区域内的远程文件管理器。下载走附件链接，上传直接提交文件数据。同名替换和删除需要在界面上确认。
+- `client/files.ts` 是远程文件管理器，作为标签栏里终端后面的一个「文件」标签打开（同时只有一个），切走再切回保留原来的目录，用标签上的关闭按钮关掉。账号和系统用户在顶部用设置里同款的分段按钮选，不要再用原生下拉框。下载走附件链接，上传直接提交文件数据。同名替换和删除需要在界面上确认。
 - `client/dom.ts` 节点协调、点击期间的更新延迟，以及需要保留终端焦点和用户激活状态的触屏点击处理。标签和主题控件保留原节点，避免后台更新打断点击、双击和焦点。
 - `client/fonts/` 两个回退字体由 `tools/subset-fonts.py` 生成，不手改。
 
@@ -62,7 +61,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 
 ## 发布和验证
 
-- 公开仓库是 `lemonhub-io/web-terminal`。GitHub Actions 从锁文件构建并上传 `web-terminal-client`，跑类型检查，再用手机尺寸的 Chromium 触屏模拟验证触屏选取与复制、文件目录导航和下载链接。
+- 公开仓库是 `lemonhub-io/web-terminal`。GitHub Actions 从锁文件构建并上传 `web-terminal-client`，跑类型检查，只用来出部署包。那里的浏览器自动检查 2026-11-22 按用户要求删了：它一路全绿，界面问题一个没抓到。界面改动上线前自己在 daumhost 上截图看一眼，不要拿 CI 结果当界面验证。
 - 文件接口的定向测试是 `node --test --test-concurrency=1 server/test/files.test.ts`，覆盖账号鉴权、文件操作、二进制往返和同名上传保护。
 - 客户端发布使用对应提交的成功构建产物，按 [README 的发布流程](README.md#client-builds-from-github-actions) 替换 `client/dist` 并 reload 网页服务。浏览器在下次加载页面时取得新资源。
 - 改网页服务端时 restart 网页服务，浏览器会重连接到现有 shell。改宿主代码或配置时才重启宿主。宿主重启结束所有 shell，操作前先向使用者确认。

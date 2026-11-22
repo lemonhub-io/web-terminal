@@ -93,6 +93,9 @@ let chooseEl: HTMLElement;
 let choicesEl: HTMLElement;
 let filePanel: ReturnType<typeof buildFilesPanel>;
 let fileButton: HTMLButtonElement;
+/** The Files tab, in the strip after the shells while it is open. */
+let filesTab: HTMLElement;
+let filesOpen = false;
 let statusEl: HTMLElement;
 let copyButton: HTMLButtonElement;
 let touchSelectButton: HTMLButtonElement;
@@ -178,6 +181,7 @@ function showLogin(message = "") {
   filePanel?.dispose();
   panelEvents = null;
   accounts = [];
+  filesOpen = false;
   listVersion++;
   tabViews.clear();
   for (const shell of shells.values()) shell.dispose();
@@ -320,6 +324,9 @@ async function showConsole(me: SessionInfo) {
     class: "tool", attrs: { type: "button", "aria-label": t("newTerminal"), title: t("newTerminal") },
     on: { click: openNew },
   }, icon("plus"));
+  filesTab = h("div", { class: "tab files-tab" },
+    h("button", { class: "tab-label", attrs: { type: "button", role: "tab" }, on: { click: openFiles } }, icon("folder"), h("span", { text: t("files") })),
+    h("button", { class: "tab-close", attrs: { type: "button", "aria-label": t("closeFiles") }, on: { click: closeFilesTab } }, icon("close")));
   tabsEl.append(inkEl, newButton);
   openButton = h("button", { class: "primary", text: t("openShell"), attrs: { type: "button" }, on: {
     click: openNew,
@@ -390,10 +397,7 @@ async function showConsole(me: SessionInfo) {
     {
       class: "tool",
       attrs: { type: "button", "aria-label": t("settings"), title: t("settings") },
-      on: { click: () => {
-        if (!filePanel.element.hidden) closeFilePanel();
-        panel.showModal();
-      } },
+      on: { click: () => panel.showModal() },
     },
     icon("sliders"),
   );
@@ -412,7 +416,7 @@ async function showConsole(me: SessionInfo) {
   fileButton = h("button", {
     class: "tool", attrs: { type: "button", "aria-label": t("files"), title: t("files"), "aria-expanded": "false" },
   }, icon("folder"));
-  onTap(fileButton, toggleFilePanel);
+  onTap(fileButton, openFiles);
   const root = h(
     "div",
     { class: "app" },
@@ -472,6 +476,7 @@ function hideFilePanel() {
   filePanel.element.hidden = true;
   fileButton.setAttribute("aria-expanded", "false");
   showKeys();
+  renderTabs();
 }
 
 function closeFilePanel() {
@@ -482,16 +487,28 @@ function closeFilePanel() {
   paintStatus();
 }
 
-function toggleFilePanel() {
-  if (!filePanel.element.hidden) return closeFilePanel();
+/** Opens the Files tab, or goes back to it where it was left. */
+function openFiles() {
+  if (!filePanel.element.hidden) return;
   const preferred = currentAccount();
   current()?.hide();
   emptyEl.hidden = true;
   chooseEl.hidden = true;
-  filePanel.show(accounts, preferred, users, preferred && userFor(preferred));
+  if (filesOpen) filePanel.reveal();
+  else {
+    filesOpen = true;
+    filePanel.show(accounts, preferred, users, preferred && userFor(preferred));
+  }
   fileButton.setAttribute("aria-expanded", "true");
   showKeys();
+  renderTabs();
   paintStatus();
+}
+
+function closeFilesTab() {
+  filesOpen = false;
+  if (filePanel.element.hidden) renderTabs();
+  else closeFilePanel();
 }
 
 /**
@@ -717,7 +734,7 @@ function startRename(info: TerminalInfo, label: HTMLElement) {
     redrawn and follows exactly when a tab is only changing size. */
 function placeInk(glide: boolean) {
   if (!consoleEl) return;
-  const tab = currentId ? tabViews.get(currentId)?.element : undefined;
+  const tab = !filePanel.element.hidden ? filesTab : currentId ? tabViews.get(currentId)?.element : undefined;
   if (!tab?.isConnected) {
     inkEl.hidden = true;
     inkAt = "";
@@ -752,7 +769,7 @@ function renderTabs() {
     const before = new Map<Element, number>();
     if (moving) for (const child of tabsEl.children) before.set(child, (child as HTMLElement).offsetLeft);
     const elements = terminals.map((terminal) => {
-      const on = terminal.id === currentId;
+      const on = terminal.id === currentId && filePanel.element.hidden;
       let view = tabViews.get(terminal.id);
       if (!view) {
         const id = terminal.id;
@@ -790,6 +807,10 @@ function renderTabs() {
       view.close.classList.toggle("confirm", closingId === terminal.id);
       return view.element;
     });
+    const filesOn = filesOpen && !filePanel.element.hidden;
+    filesTab.className = `tab files-tab${filesOn ? " on" : ""}`;
+    filesTab.firstElementChild!.setAttribute("aria-selected", String(filesOn));
+    if (filesOpen) elements.push(filesTab);
     reconcile(tabsEl, [inkEl, ...elements, newButton]);
     // Tabs that are new fade in; the ones that had to move slide from where they were.
     if (moving) {
