@@ -214,8 +214,9 @@ the corresponding passwordless sudo permission. Filesystem and process
 access follow the permissions of the account’s operating-system user.
 
 An account can also be allowed other system users (`npm run passwd` asks;
-the account file keeps them as `allowedUsers`). **+** then asks which one runs
-the new shell, and **Files** lets you pick one. The shells still belong to the
+the account file keeps them as `allowedUsers`). **Settings** then lists them
+under the account; new terminals run as the one chosen there, and **Files**
+starts with it and can switch to the others. The shells still belong to the
 web account, so another account never sees them: two people can each keep
 their own terminals while both work as either system user.
 

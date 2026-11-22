@@ -306,7 +306,7 @@ export function buildFilesPanel(actions: Actions) {
 
   return {
     element,
-    show(accounts: readonly string[], preferred?: string, users: Record<string, string[]> = {}) {
+    show(accounts: readonly string[], preferred?: string, users: Record<string, string[]> = {}, preferredUser?: string) {
       targets = accounts.flatMap((name) => {
         const own = users[name] ?? [];
         return own.length > 1 ? own.map((as) => ({ account: name, user: as })) : [{ account: name, user: "" }];
@@ -314,9 +314,12 @@ export function buildFilesPanel(actions: Actions) {
       const wanted = preferred && accounts.includes(preferred) ? preferred : undefined;
       const same = (target: Target, owner: string, as: string) => target.account === owner && target.user === as;
       const kept = targets.findIndex((target) => same(target, account, user));
+      const owner = wanted ?? account;
+      const exact = targets.findIndex((target) => same(target, owner, preferredUser ?? ""));
       const at = batch ? targets.findIndex((target) => same(target, batch!.account, batch!.user))
         : kept >= 0 && (!wanted || account === wanted) ? kept
-        : Math.max(0, targets.findIndex((target) => target.account === (wanted ?? account)));
+        : exact >= 0 ? exact
+        : Math.max(0, targets.findIndex((target) => target.account === owner));
       ({ account, user } = targets[at] ?? { account: "", user: "" });
       accountSelect.replaceChildren(...targets.map((target, index) => h("option", {
         text: target.user ? accounts.length > 1 ? `${target.account} · ${target.user}` : target.user : target.account,

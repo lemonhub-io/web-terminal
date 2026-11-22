@@ -21,7 +21,7 @@ import { afterPointer, h, icon, onTap, recall, reconcile, remember } from "./dom
 import { language, t } from "./i18n.ts";
 import { buildFilesPanel } from "./files.ts";
 import { applyModifiers, buildKeyBar } from "./keys.ts";
-import { activeTheme, buildPanel, fontFamily, onSettingsChange, settings } from "./settings.ts";
+import { activeTheme, buildPanel, fontFamily, onSettingsChange, settings, systemUserFor } from "./settings.ts";
 import { fontsReady, Shell, type ShellHost } from "./shell.ts";
 import { buildWorkspacePanel, type LoginWorkspace, type WorkspaceInfo } from "./workspaces.ts";
 
@@ -89,9 +89,6 @@ let panelEvents: AbortController | null = null;
 /** The accounts this browser is signed in to, the one from the sign-in page first. */
 let accounts: string[] = [];
 let users: Record<string, string[]> = {};
-/** What the chooser offers: one row per account and system user. */
-type Choice = { account: string; user?: string };
-let choices: Choice[] = [];
 let logins: LoginWorkspace[] = [];
 let workspaceChoices = new Map<string, string>();
 let paintAccounts = () => {};
@@ -104,7 +101,6 @@ let emptyEl: HTMLElement;
 /** Fills the stage when + is pressed while signed in to more than one account. */
 let chooseEl: HTMLElement;
 let choicesEl: HTMLElement;
-let chooseTitle: HTMLElement;
 let workspacePanel: ReturnType<typeof buildWorkspacePanel>;
 let workspaceButton: HTMLButtonElement;
 let filePanel: ReturnType<typeof buildFilesPanel>;
@@ -419,11 +415,10 @@ async function showConsole(me: SessionInfo) {
   );
   emptyEl.hidden = true;
   choicesEl = h("div", { class: "choices", attrs: { role: "group", "aria-label": t("chooseAccount") } });
-  chooseTitle = h("p", { text: t("chooseAccount") });
   chooseEl = h(
     "div",
     { class: "empty choose", on: { keydown: (event) => chooseKey(event as KeyboardEvent) } },
-    chooseTitle,
+    h("p", { text: t("chooseAccount") }),
     choicesEl,
     h("p", { class: "hint" }, h("span", { text: t("chooseByNumber") }), h("span", { text: t("chooseBack") })),
   );
@@ -464,6 +459,7 @@ async function showConsole(me: SessionInfo) {
   const built = buildPanel(
     {
       accounts: () => accounts,
+      users: (account) => users[account] ?? [],
       open: (account) => {
         close();
         void create(account);
@@ -627,7 +623,7 @@ function toggleFilePanel() {
   current()?.hide();
   emptyEl.hidden = true;
   chooseEl.hidden = true;
-  filePanel.show(accounts, preferred, users);
+  filePanel.show(accounts, preferred, users, preferred && userFor(preferred));
   fileButton.setAttribute("aria-expanded", "true");
   showKeys();
   paintStatus();
@@ -640,34 +636,26 @@ function toggleFilePanel() {
 function openNew() {
   if (!filePanel.element.hidden) closeFilePanel();
   if (!workspacePanel.element.hidden) closeWorkspacePanel();
-  choices = accounts.flatMap((account) => {
-    const own = users[account] ?? [];
-    return own.length > 1 ? own.map((user) => ({ account, user })) : [{ account }];
-  });
-  if (choices.length < 2) return void create(currentAccount() ?? emptyAccount);
+  if (accounts.length < 2) return void create(currentAccount() ?? emptyAccount);
   current()?.hide();
   emptyEl.hidden = true;
-  const byUser = choices.some((choice) => choice.user);
-  chooseTitle.textContent = t(byUser ? "chooseUser" : "chooseAccount");
-  choicesEl.setAttribute("aria-label", chooseTitle.textContent);
-  const buttons = choices.map((choice, index) => {
-    const name = choice.user ? accounts.length > 1 ? `${choice.account} · ${choice.user}` : choice.user : choice.account;
-    return h(
+  const buttons = accounts.map((account, index) =>
+    h(
       "button",
-      { class: "choice", attrs: { type: "button", title: t("openAs", { name }) }, on: { click: () => void pick(choice) } },
+      { class: "choice", attrs: { type: "button", title: t("openAs", { name: account }) }, on: { click: () => void pick(account) } },
       h("span", { class: "choice-key", text: String(index + 1) }),
-      h("span", { class: "choice-name", text: name }),
-    );
-  });
+      h("span", { class: "choice-name", text: account }),
+    ),
+  );
   choicesEl.replaceChildren(...buttons);
   chooseEl.hidden = false;
   paintSelection();
-  buttons[Math.max(0, choices.findIndex((choice) => choice.account === currentAccount()))]?.focus();
+  buttons[Math.max(0, accounts.indexOf(currentAccount() ?? ""))]?.focus();
 }
 
-async function pick(choice: Choice) {
+async function pick(account: string) {
   for (const button of choicesEl.querySelectorAll("button")) button.disabled = true;
-  await create(choice.account, choice.user);
+  await create(account);
   // Still showing means the shell could not be made: go back to where we were.
   if (!chooseEl.hidden) closeChooser();
 }
@@ -688,10 +676,10 @@ function chooseKey(event: KeyboardEvent) {
     event.preventDefault();
     return closeChooser();
   }
-  const choice = /^[1-9]$/.test(event.key) ? choices[Number(event.key) - 1] : undefined;
-  if (choice) {
+  const account = /^[1-9]$/.test(event.key) ? accounts[Number(event.key) - 1] : undefined;
+  if (account) {
     event.preventDefault();
-    return void pick(choice);
+    return void pick(account);
   }
   const step = STEPS[event.key];
   const buttons = [...choicesEl.querySelectorAll("button")];
@@ -778,13 +766,20 @@ function select(id: string) {
   paintStatus();
 }
 
-async function create(account?: string, systemUser?: string) {
+/** The system user an account's new terminals run as, when it has a choice. */
+function userFor(account: string): string | undefined {
+  const own = users[account] ?? [];
+  return own.length > 1 ? systemUserFor(account, own) : undefined;
+}
+
+async function create(account?: string) {
   if (creating) return;
   creating = true;
   newButton.disabled = true;
   openButton.disabled = true;
   try {
     const size = current()?.term;
+    const systemUser = userFor(account ?? accounts[0] ?? "");
     const made = await api<TerminalInfo>(terminalRoute("terminals"), {
       method: "POST",
       body: { dark: activeTheme().dark, ...(size && { cols: size.cols, rows: size.rows }), ...(account && { account }), ...(systemUser && { systemUser }) },

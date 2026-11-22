@@ -16,6 +16,8 @@ export interface Settings {
   contrast: boolean;
   keyBar: "auto" | "on" | "off";
   customThemes: Theme[];
+  /** The system user each signed-in account opens new terminals as, in this browser. */
+  systemUsers: Record<string, string>;
 }
 
 const DEFAULTS: Settings = {
@@ -31,6 +33,7 @@ const DEFAULTS: Settings = {
   contrast: true,
   keyBar: "auto",
   customThemes: [],
+  systemUsers: {},
 };
 
 export const FONTS: { id: string; name: string; family: string }[] = [
@@ -69,6 +72,9 @@ function load(): Settings {
     pick("contrast", (v) => typeof v === "boolean");
     pick("keyBar", (v) => v === "auto" || v === "on" || v === "off");
     if (Array.isArray(saved.customThemes)) out.customThemes = saved.customThemes.filter(isTheme).slice(0, 30);
+    if (saved.systemUsers && typeof saved.systemUsers === "object" && !Array.isArray(saved.systemUsers)) {
+      out.systemUsers = Object.fromEntries(Object.entries(saved.systemUsers).filter(([, user]) => typeof user === "string"));
+    }
   } catch {}
   return out;
 }
@@ -87,6 +93,12 @@ function notify() {
 export function onSettingsChange(listener: () => void, signal?: AbortSignal) {
   listeners.add(listener);
   signal?.addEventListener("abort", () => listeners.delete(listener), { once: true });
+}
+
+/** The system user an account opens terminals as: the one chosen here, else its own. */
+export function systemUserFor(account: string, users: readonly string[]): string | undefined {
+  const picked = settings.systemUsers[account];
+  return picked && users.includes(picked) ? picked : users[0];
 }
 
 export function update(patch: Partial<Settings>) {
@@ -216,6 +228,8 @@ function themeTile(theme: Theme, selected: boolean, choose: () => void, remove?:
 export interface AccountActions {
   /** The accounts this browser is signed in to, the one from the sign-in page first. */
   accounts: () => readonly string[];
+  /** The system users an account may open terminals as, its own first. */
+  users: (account: string) => readonly string[];
   /** Opens a new terminal as this account. */
   open: (account: string) => void;
   /** Signs in to one more account; resolves to what went wrong, or "" when it worked. */
@@ -247,11 +261,14 @@ function accountChip(name: string, actions: AccountActions): HTMLElement {
 
 /** Who is signed in, a chip per account once there is more than one, and a
     folded form that signs in to one more with its own password, once. */
-function accountArea(actions: AccountActions): { element: HTMLElement; paint: () => void } {
+function accountArea(actions: AccountActions, signal: AbortSignal): { element: HTMLElement; paint: () => void } {
   const label = h("span", { class: "row-label" });
   const head = h("h3", { text: t("newTerminal") });
   const chips = h("div", { class: "chips" });
   const views = new Map<string, HTMLElement>();
+  // The second layer: which system user each account's new terminals run as.
+  const userRows = h("div", { class: "account-users" });
+  const userViews = new Map<string, HTMLElement>();
   const paint = () => {
     const accounts = actions.accounts();
     label.textContent = t("account", { name: accounts[0] ?? "" });
@@ -259,6 +276,22 @@ function accountArea(actions: AccountActions): { element: HTMLElement; paint: ()
     for (const name of accounts) if (!views.has(name)) views.set(name, accountChip(name, actions));
     head.hidden = chips.hidden = accounts.length < 2;
     reconcile(chips, accounts.length < 2 ? [] : accounts.map((name) => views.get(name)!));
+    const rows: HTMLElement[] = [];
+    for (const name of accounts) {
+      const users = actions.users(name);
+      if (users.length < 2) continue;
+      const key = `${accounts.length > 1 ? name : ""}\n${name}\n${users.join("\n")}`;
+      let view = userViews.get(key);
+      if (!view) {
+        const text = accounts.length > 1 ? t("systemUserOf", { name }) : t("systemUser");
+        view = row(text, segmented(text, users.map((user): [string, string] => [user, user]), () => systemUserFor(name, users) ?? "",
+          (user) => update({ systemUsers: { ...settings.systemUsers, [name]: user } }), signal));
+        userViews.set(key, view);
+      }
+      rows.push(view);
+    }
+    reconcile(userRows, rows);
+    userRows.hidden = !rows.length;
   };
 
   const user = h("input", {
@@ -307,6 +340,7 @@ function accountArea(actions: AccountActions): { element: HTMLElement; paint: ()
     "section",
     { class: "account" },
     h("div", { class: "row" }, label, h("button", { class: "plain", text: t("signOut"), attrs: { type: "button" }, on: { click: actions.signOut } })),
+    userRows,
     head,
     chips,
     adder,
@@ -418,7 +452,7 @@ export function buildPanel(actions: AccountActions, signal: AbortSignal): { pane
   );
   languageSelect.value = ((recall(LANGUAGE_KEY) as Language | null) ?? "auto") satisfies string;
 
-  const account = accountArea(actions);
+  const account = accountArea(actions, signal);
   const panel = h(
     "dialog",
     { class: "panel", attrs: { "aria-label": t("settings") } },
