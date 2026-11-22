@@ -156,7 +156,7 @@ export function buildWorkspacePanel(actions: Actions) {
     const children = rows.filter((workspace) => workspace.account === account).map(row);
     if (editing === "") children.unshift(editor());
     list.replaceChildren(...children);
-    for (const control of list.querySelectorAll("button, input")) control.disabled = busy;
+    for (const control of list.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")) control.disabled = busy;
     add.disabled = accountSelect.disabled = busy;
   }
 

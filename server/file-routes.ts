@@ -10,7 +10,7 @@ const accountName = z.string().min(1).max(200);
 const absolutePath = z.string().max(4096).refine((value) => value.startsWith("/") && !value.includes("\0"));
 const itemName = z.string().min(1).max(255).refine((value) =>
   value !== "." && value !== ".." && !value.includes("/") && !value.includes("\0"));
-const location = z.object({ account: accountName, path: absolutePath });
+const location = z.object({ account: accountName, path: absolutePath, user: z.string().min(1).max(64).optional() });
 const item = location.extend({ name: itemName });
 const list = location.partial({ path: true }).extend({
   offset: z.coerce.number().int().min(0).optional().default(0),
@@ -27,10 +27,13 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data;
 }
 
-function account(c: Context<Env>, username: string) {
+/** The signed-in account, acting as the system user it picked (its own when left out). */
+function account(c: Context<Env>, username: string, user?: string) {
   const identity = c.get("session").accounts.find((account) => account.username === username);
   if (!identity) throw new HttpError(403, "Sign in to that account first");
-  return identity;
+  if (user === undefined) return identity;
+  if (!identity.systemUsers.includes(user)) throw new HttpError(403, "That account cannot use this system user");
+  return { ...identity, systemUser: user };
 }
 
 function attachment(name: string) {
@@ -42,38 +45,38 @@ function attachment(name: string) {
 export function fileRoutes() {
   const files = new Hono<Env>();
   files.get("/", async (c) => {
-    const { account: username, path, offset, hidden } = parse(list, c.req.query());
-    const { value } = await fileJob<FilePage>(account(c, username), { action: "list", path, offset, hidden: hidden === "1" }, c.req.raw.signal);
+    const { account: username, user, path, offset, hidden } = parse(list, c.req.query());
+    const { value } = await fileJob<FilePage>(account(c, username, user), { action: "list", path, offset, hidden: hidden === "1" }, c.req.raw.signal);
     return c.json(value);
   });
   files.get("/download", async (c) => {
-    const { account: username, path, name } = parse(item, c.req.query());
-    const { value, body } = await fileJob<{ name: string }>(account(c, username), { action: "download", path, name }, c.req.raw.signal);
+    const { account: username, user, path, name } = parse(item, c.req.query());
+    const { value, body } = await fileJob<{ name: string }>(account(c, username, user), { action: "download", path, name }, c.req.raw.signal);
     return new Response(body, {
       headers: { "Content-Type": "application/octet-stream", "Content-Disposition": attachment(value.name), "Cache-Control": "no-store" },
     });
   });
   files.post("/upload", async (c) => {
-    const { account: username, path, name, size, replace } = parse(incomingFile, c.req.query());
+    const { account: username, user, path, name, size, replace } = parse(incomingFile, c.req.query());
     const body = c.req.raw.body;
     if (!body && size) throw new HttpError(400, "Choose a file to upload");
-    await fileJob(account(c, username), { action: "upload", path, name, size, replace: replace === "1" }, c.req.raw.signal, body ?? undefined);
+    await fileJob(account(c, username, user), { action: "upload", path, name, size, replace: replace === "1" }, c.req.raw.signal, body ?? undefined);
     return c.json({ ok: true }, 201);
   });
   files.post("/folders", async (c) => {
-    const { account: username, path, name } = parse(item, await c.req.json().catch(() => undefined));
-    await fileJob(account(c, username), { action: "mkdir", path, name }, c.req.raw.signal);
+    const { account: username, user, path, name } = parse(item, await c.req.json().catch(() => undefined));
+    await fileJob(account(c, username, user), { action: "mkdir", path, name }, c.req.raw.signal);
     return c.json({ ok: true }, 201);
   });
   files.patch("/item", async (c) => {
     const body = await c.req.json().catch(() => undefined);
-    const { account: username, path, name, to } = parse(item.extend({ to: itemName }), body);
-    await fileJob(account(c, username), { action: "rename", path, name, to }, c.req.raw.signal);
+    const { account: username, user, path, name, to } = parse(item.extend({ to: itemName }), body);
+    await fileJob(account(c, username, user), { action: "rename", path, name, to }, c.req.raw.signal);
     return c.json({ ok: true });
   });
   files.delete("/item", async (c) => {
-    const { account: username, path, name } = parse(item, await c.req.json().catch(() => undefined));
-    await fileJob(account(c, username), { action: "delete", path, name }, c.req.raw.signal);
+    const { account: username, user, path, name } = parse(item, await c.req.json().catch(() => undefined));
+    await fileJob(account(c, username, user), { action: "delete", path, name }, c.req.raw.signal);
     return c.json({ ok: true });
   });
   return files;

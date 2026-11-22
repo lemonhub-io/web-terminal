@@ -16,7 +16,9 @@ interface Actions {
 }
 
 type Edit = { kind: "create" } | { kind: "rename" | "delete"; entry: FileEntry };
-type Upload = { files: File[]; account: string; path: string; controller: AbortController };
+type Upload = { files: File[]; account: string; user: string; path: string; controller: AbortController };
+/** A signed-in account acting as one of its system users ("" for its own when it has just one). */
+type Target = { account: string; user: string };
 
 const date = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" });
 const number = new Intl.NumberFormat(language, { maximumFractionDigits: 1 });
@@ -28,6 +30,9 @@ function formatSize(bytes: number) {
 
 export function buildFilesPanel(actions: Actions) {
   let account = "";
+  let user = "";
+  let targets: Target[] = [];
+  const key = (owner = account, as = user) => `${owner}\n${as}`;
   let page: FilePage | undefined;
   let hidden = false;
   let edit: Edit | undefined;
@@ -48,7 +53,7 @@ export function buildFilesPanel(actions: Actions) {
     const files = Array.from(fileInput.files ?? []);
     fileInput.value = "";
     if (!page || !files.length || busy || batch) return;
-    batch = { files, account, path: page.path, controller: new AbortController() };
+    batch = { files, account, user, path: page.path, controller: new AbortController() };
     void upload(false);
   });
 
@@ -60,11 +65,11 @@ export function buildFilesPanel(actions: Actions) {
   }, icon(name));
   const accountSelect = h("select", { attrs: { "aria-label": t("username") }, on: {
     change: () => {
-      account = accountSelect.value;
+      ({ account, user } = targets[Number(accountSelect.value)] ?? { account, user });
       page = undefined;
       edit = undefined;
       paint();
-      void browse(folders.get(account));
+      void browse(folders.get(key()));
     },
   } });
   const folder = button(t("newFolder"), () => {
@@ -129,8 +134,8 @@ export function buildFilesPanel(actions: Actions) {
     message(error instanceof Error ? error.message : t("fileOperationFailed"), true);
   }
 
-  function url(route: string, owner: string, directory?: string, extras?: Record<string, string>) {
-    return `files${route}?${new URLSearchParams({ account: owner, ...(directory && { path: directory }), ...extras })}`;
+  function url(route: string, owner: string, as: string, directory?: string, extras?: Record<string, string>) {
+    return `files${route}?${new URLSearchParams({ account: owner, ...(as && { user: as }), ...(directory && { path: directory }), ...extras })}`;
   }
 
   async function browse(directory?: string, offset = 0) {
@@ -138,11 +143,12 @@ export function buildFilesPanel(actions: Actions) {
     const pending = new AbortController();
     loading = pending;
     const owner = account;
+    const as = user;
     edit = undefined;
     message(t("loadingFiles"));
     paint();
     try {
-      const next = await actions.request<FilePage>(url("", owner, directory, { offset: String(offset), hidden: hidden ? "1" : "0" }), { signal: pending.signal });
+      const next = await actions.request<FilePage>(url("", owner, as, directory, { offset: String(offset), hidden: hidden ? "1" : "0" }), { signal: pending.signal });
       if (loading !== pending || disposed) return;
       if (offset && page) {
         const entries = new Map(page.entries.map((entry) => [entry.name, entry]));
@@ -150,7 +156,7 @@ export function buildFilesPanel(actions: Actions) {
         next.entries = [...entries.values()];
       }
       page = next;
-      folders.set(owner, next.path);
+      folders.set(key(owner, as), next.path);
       address.value = next.path;
       message("");
     } catch (error) {
@@ -169,7 +175,7 @@ export function buildFilesPanel(actions: Actions) {
     busy = true;
     paint();
     try {
-      await actions.request(route, { method, body: { account, path: directory, ...fields } });
+      await actions.request(route, { method, body: { account, ...(user && { user }), path: directory, ...fields } });
       edit = undefined;
       if (!disposed) await browse(directory);
     } catch (error) {
@@ -192,7 +198,7 @@ export function buildFilesPanel(actions: Actions) {
         const file = upload.files[0]!;
         message(t("uploadingFile", { name: file.name }));
         try {
-          await actions.request(url("/upload", upload.account, upload.path, {
+          await actions.request(url("/upload", upload.account, upload.user, upload.path, {
             name: file.name, size: String(file.size), ...(replace && { replace: "1" }),
           }), { method: "POST", upload: file, signal: upload.controller.signal });
         } catch (error) {
@@ -253,7 +259,7 @@ export function buildFilesPanel(actions: Actions) {
         click: () => { if (!busy && !batch && !loading && page) void browse(`${page.path === "/" ? "" : page.path}/${entry.name}`); },
       } }, symbol, filename)
       : entry.kind === "file"
-        ? h("a", { ...props, attrs: { ...props.attrs, download: entry.name, href: `/api/${url("/download", account, page?.path, { name: entry.name })}` } }, symbol, filename)
+        ? h("a", { ...props, attrs: { ...props.attrs, download: entry.name, href: `/api/${url("/download", account, user, page?.path, { name: entry.name })}` } }, symbol, filename)
         : h("span", props, symbol, filename);
     const rename = tool("edit", t("renameFile", { name: entry.name }), () => {
       edit = { kind: "rename", entry };
@@ -286,7 +292,7 @@ export function buildFilesPanel(actions: Actions) {
     up.disabled = disabled || !page || page.path === "/";
     more.hidden = page?.next === undefined;
     more.disabled = disabled;
-    for (const control of body.querySelectorAll("button, input")) control.disabled = disabled;
+    for (const control of body.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")) control.disabled = disabled;
     conflictBox.hidden = !conflict;
     if (conflict) {
       conflictBox.replaceChildren(h("span", { text: t("replaceFileWarning", { name: conflict }) }),
@@ -300,18 +306,31 @@ export function buildFilesPanel(actions: Actions) {
 
   return {
     element,
-    show(accounts: readonly string[], preferred?: string) {
-      account = batch?.account ?? (preferred && accounts.includes(preferred) ? preferred : accounts.includes(account) ? account : accounts[0] ?? "");
-      accountSelect.replaceChildren(...accounts.map((name) => h("option", { text: name, attrs: { value: name } })));
-      accountSelect.value = account;
-      accountSelect.hidden = accounts.length < 2;
+    show(accounts: readonly string[], preferred?: string, users: Record<string, string[]> = {}) {
+      targets = accounts.flatMap((name) => {
+        const own = users[name] ?? [];
+        return own.length > 1 ? own.map((as) => ({ account: name, user: as })) : [{ account: name, user: "" }];
+      });
+      const wanted = preferred && accounts.includes(preferred) ? preferred : undefined;
+      const same = (target: Target, owner: string, as: string) => target.account === owner && target.user === as;
+      const kept = targets.findIndex((target) => same(target, account, user));
+      const at = batch ? targets.findIndex((target) => same(target, batch!.account, batch!.user))
+        : kept >= 0 && (!wanted || account === wanted) ? kept
+        : Math.max(0, targets.findIndex((target) => target.account === (wanted ?? account)));
+      ({ account, user } = targets[at] ?? { account: "", user: "" });
+      accountSelect.replaceChildren(...targets.map((target, index) => h("option", {
+        text: target.user ? accounts.length > 1 ? `${target.account} · ${target.user}` : target.user : target.account,
+        attrs: { value: String(index) },
+      })));
+      accountSelect.value = String(Math.max(0, at));
+      accountSelect.hidden = targets.length < 2;
       edit = undefined;
       element.hidden = false;
       element.focus({ preventScroll: true });
       if (batch || busy) paint();
       else {
         page = undefined;
-        void browse(folders.get(account));
+        void browse(folders.get(key()));
       }
     },
     dispose() {

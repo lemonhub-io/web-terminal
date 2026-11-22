@@ -72,6 +72,8 @@ const terminalOptions = z.object({
   dark: z.boolean().optional(),
   /** Which signed-in account the shell belongs to; the first one when left out. */
   account: z.string().min(1).max(200).optional(),
+  /** Which of that account's system users runs it; its own when left out. */
+  systemUser: z.string().min(1).max(64).optional(),
 });
 
 const terminalName = z.object({ name: z.string().max(200) });
@@ -98,6 +100,7 @@ export function createTermApp({ auth, throttle, terminals, assets, workspaces }:
     username: session.accounts[0]?.username ?? "",
     accounts: session.accounts.map((account) => account.username),
     logins: workspaces.defaults(session),
+    users: Object.fromEntries(session.accounts.map((account) => [account.username, account.systemUsers])),
   });
   const scopesFor = (c: Context<Env>) => workspaces.select(c.get("session"), c.req.queries("workspace") ?? []);
 
@@ -208,13 +211,15 @@ export function createTermApp({ auth, throttle, terminals, assets, workspaces }:
   });
   api.post("/terminals", async (c) => {
     const options = terminalOptions.safeParse(await c.req.json().catch(() => ({})));
-    const { account, ...size }: z.infer<typeof terminalOptions> = options.success ? options.data : {};
+    const { account, systemUser, ...size }: z.infer<typeof terminalOptions> = options.success ? options.data : {};
     const session = c.get("session");
     const scopes = scopesFor(c);
     const owner = account === undefined ? scopes[0] : scopes.find((entry) => entry.username === account);
     if (!owner) throw new HttpError(403, "Sign in to that account first");
+    if (systemUser !== undefined && !owner.systemUsers.includes(systemUser)) throw new HttpError(403, "That account cannot use this system user");
+    const user = systemUser ?? owner.systemUser;
     const info = await workspaces.run(session, owner.workspace, () =>
-      terminals.create({ ...size, ...(owner.systemUser ? { systemUser: owner.systemUser } : {}) }, owner.owner));
+      terminals.create({ ...size, ...(user ? { systemUser: user } : {}) }, owner.owner));
     return c.json(publicTerminal(info, scopes));
   });
   api.patch("/terminals/:id", async (c) => {

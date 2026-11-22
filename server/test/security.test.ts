@@ -54,7 +54,7 @@ test("Auth keeps one token per account and drops only the one whose password cha
     assert.ok(tLemon && tNia);
     assert.equal(await auth.login("nia", "pass1"), null);
     const both = auth.verify(Auth.join([tLemon, tNia]));
-    assert.deepEqual(both?.accounts.map(({ username, systemUser }) => ({ username, systemUser })), auth.listAccounts());
+    assert.deepEqual(both?.accounts.map(({ loginId: _, ...account }) => account), auth.listAccounts());
     assert.equal(both?.changed, false);
 
     // Changing nia's password signs out nia only.
@@ -114,6 +114,9 @@ test("Every sign-in to an account shares its shells; other accounts stay apart",
     const made = (await call("POST", "terminals", { account: "b", cols: 80, rows: 24 })).data;
     assert.equal(made.account, "b");
     const mine = (await call("POST", "terminals", { account: "a", cols: 80, rows: 24 })).data;
+    // A web account picks only among the system users it is allowed.
+    assert.deepEqual((await call("GET", "session")).data.users, { a: [os.userInfo().username], b: [os.userInfo().username] });
+    assert.equal((await call("POST", "terminals", { account: "b", systemUser: "root" })).status, 403);
     assert.deepEqual(ids((await call("GET", "terminals")).data), ids([made, mine, legacy, perLogin]));
 
     // Another browser signed in to b alone sees all of b's shells and none of a's.

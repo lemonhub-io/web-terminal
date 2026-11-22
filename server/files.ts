@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import type { FileJob, FileReply } from "../shared/files.ts";
 import type { SessionIdentity } from "./auth.ts";
 import { HttpError } from "./http-error.ts";
@@ -60,7 +61,7 @@ export async function fileJob<T>(
   if (signal.aborted) abort();
   const cleanup = () => signal.removeEventListener("abort", abort);
   const transfer = input
-    ? pipeline(Readable.fromWeb(input), child.stdin, { signal }).then(() => true, () => false)
+    ? pipeline(Readable.fromWeb(input as unknown as NodeReadableStream<Uint8Array>), child.stdin, { signal }).then(() => true, () => false)
     : undefined;
   if (!transfer) child.stdin.end();
   try {

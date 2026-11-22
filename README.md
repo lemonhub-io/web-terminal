@@ -106,7 +106,8 @@ signed-in account. Choose **Done** to return to the terminal.
 | Organize | Use **New folder**, or use the rename or delete action beside an item. Confirm deletion to permanently remove the item and, for a folder, its contents |
 
 File operations run as the same operating-system user as the account's
-shells. Home is the starting location. You can enter other paths that this
+shells; an account allowed several system users picks one at the top of the
+panel. Home is the starting location. You can enter other paths that this
 user can access. Sessions under the same account share that filesystem.
 
 ## Deployment
@@ -196,6 +197,7 @@ started before sessions existed. Nothing in the shell host changes.
 | `WEB_TERMINAL_DATA` | `var/` in the checkout | Directory for the private socket and the `secrets/` directory |
 | `WEB_TERMINAL_USERNAME` | Prompted interactively | Account name for `npm run passwd` |
 | `WEB_TERMINAL_SYSTEM_USER` | Prompted interactively | Optional operating-system user for that account |
+| `WEB_TERMINAL_ALLOWED_USERS` | Prompted interactively | Other operating-system users the account may pick, comma-separated |
 
 For a custom data directory, use the same absolute path for both services
 and for `npm run passwd`. Keep the directory private to the service user.
@@ -210,6 +212,12 @@ user. The host looks up the user with `getent` and starts its login shell
 with `sudo -n` when it differs from the service user. The service user needs
 the corresponding passwordless sudo permission. Filesystem and process
 access follow the permissions of the account’s operating-system user.
+
+An account can also be allowed other system users (`npm run passwd` asks;
+the account file keeps them as `allowedUsers`). **+** then asks which one runs
+the new shell, and **Files** lets you pick one. The shells still belong to the
+web account, so another account never sees them: two people can each keep
+their own terminals while both work as either system user.
 
 For an account bound to a different system user, the web service launches
 the file worker with `sudo -n -u` as that user. Ensure the user can run the

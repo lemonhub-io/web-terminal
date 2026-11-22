@@ -5,6 +5,7 @@
 // token per account, and each token is checked on its own.
 import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -30,11 +31,15 @@ export interface Account {
   username: string;
   hash: string;
   systemUser?: string;
+  /** Other system users this account may open shells and files as. */
+  allowedUsers?: string[];
 }
 
 export interface SessionIdentity {
   username: string;
   systemUser?: string;
+  /** Every system user it may pick, its own first. The web account still owns the shells. */
+  systemUsers: string[];
   loginId: string;
 }
 
@@ -50,6 +55,7 @@ export interface Session {
 const identity = (account: Account): Omit<SessionIdentity, "loginId"> => ({
   username: account.username,
   ...(account.systemUser ? { systemUser: account.systemUser } : {}),
+  systemUsers: [...new Set([account.systemUser ?? os.userInfo().username, ...(account.allowedUsers ?? [])])],
 });
 
 export async function hashPassword(password: string): Promise<string> {
@@ -113,17 +119,20 @@ export class Auth {
     return matched;
   }
 
-  listAccounts(): Array<{ username: string; systemUser?: string }> {
+  listAccounts(): Array<Omit<SessionIdentity, "loginId">> {
     return this.accounts().map(identity);
   }
 
-  async setAccount(username: string, password: string, systemUser?: string) {
+  async setAccount(username: string, password: string, systemUser?: string, allowedUsers?: string[]) {
     const accounts = this.accounts();
     const hash = await hashPassword(password);
     const index = accounts.findIndex((item) => item.username === username);
     const previous = index >= 0 ? accounts[index] : undefined;
     const resolvedSystemUser = systemUser === undefined ? previous?.systemUser : systemUser || undefined;
-    const next: Account = { username, hash, ...(resolvedSystemUser ? { systemUser: resolvedSystemUser } : {}) };
+    const allowed = (allowedUsers ?? previous?.allowedUsers ?? []).filter((user) => user && user !== resolvedSystemUser);
+    const next: Account = {
+      username, hash, ...(resolvedSystemUser ? { systemUser: resolvedSystemUser } : {}), ...(allowed.length ? { allowedUsers: allowed } : {}),
+    };
     if (index >= 0) accounts[index] = next;
     else accounts.push(next);
     fs.writeFileSync(this.accountsFile, JSON.stringify({ accounts }, null, 2) + "\n", { mode: 0o600 });

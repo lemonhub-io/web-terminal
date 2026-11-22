@@ -1,5 +1,6 @@
 // Adds or updates an account. Interactive on a terminal; otherwise reads the
 // username from WEB_TERMINAL_USERNAME, optional system user from WEB_TERMINAL_SYSTEM_USER,
+// other system users it may pick from WEB_TERMINAL_ALLOWED_USERS (comma-separated),
 // and the password from the first line of stdin.
 import readline from "node:readline/promises";
 import { config } from "./config.ts";
@@ -20,12 +21,18 @@ async function prompt(question: string, hidden = false): Promise<string> {
 
 let username = process.env.WEB_TERMINAL_USERNAME ?? "";
 let systemUser = process.env.WEB_TERMINAL_SYSTEM_USER;
+const list = (value: string) => value.split(",").map((user) => user.trim()).filter(Boolean);
+let allowedUsers = process.env.WEB_TERMINAL_ALLOWED_USERS === undefined ? undefined : list(process.env.WEB_TERMINAL_ALLOWED_USERS);
 let password: string;
 if (process.stdin.isTTY) {
   username ||= await prompt("Username: ");
   if (systemUser === undefined) {
     const entered = (await prompt("System user (optional, Enter for service user): ")).trim();
     if (entered) systemUser = entered;
+  }
+  if (allowedUsers === undefined) {
+    const entered = (await prompt("Other system users it may use (comma-separated, Enter keeps the current list): ")).trim();
+    if (entered) allowedUsers = entered === "-" ? [] : list(entered);
   }
   password = await prompt("Password: ", true);
   if ((await prompt("Repeat password: ", true)) !== password) throw new Error("Passwords do not match");
@@ -35,5 +42,5 @@ if (process.stdin.isTTY) {
   password = Buffer.concat(chunks).toString().split(/\r?\n/)[0] ?? "";
 }
 if (!username || !password) throw new Error("Username and password are required");
-await new Auth(config.paths.secrets).setAccount(username, password, systemUser);
+await new Auth(config.paths.secrets).setAccount(username, password, systemUser, allowedUsers);
 console.log(`Account "${username}" saved${systemUser ? ` (system user: ${systemUser})` : ""}. Existing sessions for "${username}" are signed out.`);

@@ -42,6 +42,8 @@ interface SessionInfo {
   /** Every account it is signed in to, the one from the sign-in page first. */
   accounts?: string[];
   logins?: LoginWorkspace[];
+  /** The system users each account may open shells as, its own first. */
+  users?: Record<string, string[]>;
 }
 
 interface WorkspaceCatalog extends SessionInfo {
@@ -86,6 +88,10 @@ const tabsWatch = new ResizeObserver(() => placeInk(false));
 let panelEvents: AbortController | null = null;
 /** The accounts this browser is signed in to, the one from the sign-in page first. */
 let accounts: string[] = [];
+let users: Record<string, string[]> = {};
+/** What the chooser offers: one row per account and system user. */
+type Choice = { account: string; user?: string };
+let choices: Choice[] = [];
 let logins: LoginWorkspace[] = [];
 let workspaceChoices = new Map<string, string>();
 let paintAccounts = () => {};
@@ -98,6 +104,7 @@ let emptyEl: HTMLElement;
 /** Fills the stage when + is pressed while signed in to more than one account. */
 let chooseEl: HTMLElement;
 let choicesEl: HTMLElement;
+let chooseTitle: HTMLElement;
 let workspacePanel: ReturnType<typeof buildWorkspacePanel>;
 let workspaceButton: HTMLButtonElement;
 let filePanel: ReturnType<typeof buildFilesPanel>;
@@ -263,6 +270,7 @@ function setAccounts(me: SessionInfo) {
 
 function readSession(me: SessionInfo) {
   accounts = me.accounts?.length ? me.accounts : [me.username];
+  users = me.users ?? {};
   logins = me.logins ?? [];
   const choices = new Map<string, string>();
   for (const login of logins) {
@@ -411,10 +419,11 @@ async function showConsole(me: SessionInfo) {
   );
   emptyEl.hidden = true;
   choicesEl = h("div", { class: "choices", attrs: { role: "group", "aria-label": t("chooseAccount") } });
+  chooseTitle = h("p", { text: t("chooseAccount") });
   chooseEl = h(
     "div",
     { class: "empty choose", on: { keydown: (event) => chooseKey(event as KeyboardEvent) } },
-    h("p", { text: t("chooseAccount") }),
+    chooseTitle,
     choicesEl,
     h("p", { class: "hint" }, h("span", { text: t("chooseByNumber") }), h("span", { text: t("chooseBack") })),
   );
@@ -618,7 +627,7 @@ function toggleFilePanel() {
   current()?.hide();
   emptyEl.hidden = true;
   chooseEl.hidden = true;
-  filePanel.show(accounts, preferred);
+  filePanel.show(accounts, preferred, users);
   fileButton.setAttribute("aria-expanded", "true");
   showKeys();
   paintStatus();
@@ -631,26 +640,34 @@ function toggleFilePanel() {
 function openNew() {
   if (!filePanel.element.hidden) closeFilePanel();
   if (!workspacePanel.element.hidden) closeWorkspacePanel();
-  if (accounts.length < 2) return void create(currentAccount() ?? emptyAccount);
+  choices = accounts.flatMap((account) => {
+    const own = users[account] ?? [];
+    return own.length > 1 ? own.map((user) => ({ account, user })) : [{ account }];
+  });
+  if (choices.length < 2) return void create(currentAccount() ?? emptyAccount);
   current()?.hide();
   emptyEl.hidden = true;
-  const buttons = accounts.map((account, index) =>
-    h(
+  const byUser = choices.some((choice) => choice.user);
+  chooseTitle.textContent = t(byUser ? "chooseUser" : "chooseAccount");
+  choicesEl.setAttribute("aria-label", chooseTitle.textContent);
+  const buttons = choices.map((choice, index) => {
+    const name = choice.user ? accounts.length > 1 ? `${choice.account} · ${choice.user}` : choice.user : choice.account;
+    return h(
       "button",
-      { class: "choice", attrs: { type: "button", title: t("openAs", { name: account }) }, on: { click: () => void pick(account) } },
+      { class: "choice", attrs: { type: "button", title: t("openAs", { name }) }, on: { click: () => void pick(choice) } },
       h("span", { class: "choice-key", text: String(index + 1) }),
-      h("span", { class: "choice-name", text: account }),
-    ),
-  );
+      h("span", { class: "choice-name", text: name }),
+    );
+  });
   choicesEl.replaceChildren(...buttons);
   chooseEl.hidden = false;
   paintSelection();
-  buttons[Math.max(0, accounts.indexOf(currentAccount() ?? ""))]?.focus();
+  buttons[Math.max(0, choices.findIndex((choice) => choice.account === currentAccount()))]?.focus();
 }
 
-async function pick(account: string) {
+async function pick(choice: Choice) {
   for (const button of choicesEl.querySelectorAll("button")) button.disabled = true;
-  await create(account);
+  await create(choice.account, choice.user);
   // Still showing means the shell could not be made: go back to where we were.
   if (!chooseEl.hidden) closeChooser();
 }
@@ -671,10 +688,10 @@ function chooseKey(event: KeyboardEvent) {
     event.preventDefault();
     return closeChooser();
   }
-  const account = /^[1-9]$/.test(event.key) ? accounts[Number(event.key) - 1] : undefined;
-  if (account) {
+  const choice = /^[1-9]$/.test(event.key) ? choices[Number(event.key) - 1] : undefined;
+  if (choice) {
     event.preventDefault();
-    return void pick(account);
+    return void pick(choice);
   }
   const step = STEPS[event.key];
   const buttons = [...choicesEl.querySelectorAll("button")];
@@ -761,7 +778,7 @@ function select(id: string) {
   paintStatus();
 }
 
-async function create(account?: string) {
+async function create(account?: string, systemUser?: string) {
   if (creating) return;
   creating = true;
   newButton.disabled = true;
@@ -770,7 +787,7 @@ async function create(account?: string) {
     const size = current()?.term;
     const made = await api<TerminalInfo>(terminalRoute("terminals"), {
       method: "POST",
-      body: { dark: activeTheme().dark, ...(size && { cols: size.cols, rows: size.rows }), ...(account && { account }) },
+      body: { dark: activeTheme().dark, ...(size && { cols: size.cols, rows: size.rows }), ...(account && { account }), ...(systemUser && { systemUser }) },
     });
     await refresh();
     select(made.id);
