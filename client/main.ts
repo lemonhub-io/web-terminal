@@ -23,7 +23,6 @@ import { buildFilesPanel } from "./files.ts";
 import { applyModifiers, buildKeyBar } from "./keys.ts";
 import { activeTheme, buildPanel, fontFamily, onSettingsChange, settings, systemUserFor } from "./settings.ts";
 import { fontsReady, Shell, type ShellHost } from "./shell.ts";
-import { buildWorkspacePanel, type LoginWorkspace, type WorkspaceInfo } from "./workspaces.ts";
 
 interface TerminalInfo {
   id: string;
@@ -31,7 +30,6 @@ interface TerminalInfo {
   name: string;
   /** The account the shell belongs to. */
   account: string;
-  workspace?: string;
   created: number;
   clients: number;
 }
@@ -41,13 +39,8 @@ interface SessionInfo {
   username: string;
   /** Every account it is signed in to, the one from the sign-in page first. */
   accounts?: string[];
-  logins?: LoginWorkspace[];
   /** The system users each account may open shells as, its own first. */
   users?: Record<string, string[]>;
-}
-
-interface WorkspaceCatalog extends SessionInfo {
-  workspaces: WorkspaceInfo[];
 }
 
 class HttpFailure extends Error {
@@ -70,7 +63,6 @@ const shells = new Map<string, Shell>();
 /** What each background tab's program is doing; tabs that are idle are left out. */
 const marks = new Map<string, Activity>();
 let currentId: string | null = null;
-let emptyAccount: string | undefined;
 let listVersion = 0;
 /** The tab whose close button is waiting for its second click. */
 let closingId: string | null = null;
@@ -89,8 +81,6 @@ let panelEvents: AbortController | null = null;
 /** The accounts this browser is signed in to, the one from the sign-in page first. */
 let accounts: string[] = [];
 let users: Record<string, string[]> = {};
-let logins: LoginWorkspace[] = [];
-let workspaceChoices = new Map<string, string>();
 let paintAccounts = () => {};
 let notice = "";
 let noticeTimer = 0;
@@ -101,8 +91,6 @@ let emptyEl: HTMLElement;
 /** Fills the stage when + is pressed while signed in to more than one account. */
 let chooseEl: HTMLElement;
 let choicesEl: HTMLElement;
-let workspacePanel: ReturnType<typeof buildWorkspacePanel>;
-let workspaceButton: HTMLButtonElement;
 let filePanel: ReturnType<typeof buildFilesPanel>;
 let fileButton: HTMLButtonElement;
 let statusEl: HTMLElement;
@@ -145,7 +133,7 @@ function paintChrome() {
 }
 
 function showKeys() {
-  if (keysEl) keysEl.hidden = !workspacePanel.element.hidden || !filePanel.element.hidden || !(settings.keyBar === "on" || (settings.keyBar === "auto" && coarse.matches));
+  if (keysEl) keysEl.hidden = !filePanel.element.hidden || !(settings.keyBar === "on" || (settings.keyBar === "auto" && coarse.matches));
 }
 
 /** Shows a short message where the connection state sits, then lets it go. */
@@ -171,7 +159,7 @@ function paintStatus() {
 
 function paintSelection() {
   if (!consoleEl) return;
-  const shell = chooseEl.hidden && workspacePanel.element.hidden && filePanel.element.hidden ? current() : undefined;
+  const shell = chooseEl.hidden && filePanel.element.hidden ? current() : undefined;
   touchSelectButton.hidden = !shell;
   touchSelectButton.setAttribute("aria-pressed", String(!!shell?.touchSelectionActive));
   copyButton.hidden = !shell?.term.hasSelection() || shell.touchSelectionActive;
@@ -190,9 +178,6 @@ function showLogin(message = "") {
   filePanel?.dispose();
   panelEvents = null;
   accounts = [];
-  logins = [];
-  workspaceChoices.clear();
-  emptyAccount = undefined;
   listVersion++;
   tabViews.clear();
   for (const shell of shells.values()) shell.dispose();
@@ -259,7 +244,6 @@ async function signOut() {
 
 function setAccounts(me: SessionInfo) {
   readSession(me);
-  workspaceButton.hidden = !logins.length;
   paintAccounts();
   renderTabs();
 }
@@ -267,73 +251,6 @@ function setAccounts(me: SessionInfo) {
 function readSession(me: SessionInfo) {
   accounts = me.accounts?.length ? me.accounts : [me.username];
   users = me.users ?? {};
-  logins = me.logins ?? [];
-  const choices = new Map<string, string>();
-  for (const login of logins) {
-    let id = workspaceChoices.get(login.loginId);
-    try { id ??= sessionStorage.getItem(`web-terminal:session:${login.loginId}`) ?? undefined; } catch {}
-    if (id) choices.set(login.loginId, id);
-  }
-  workspaceChoices = choices;
-}
-
-function pickWorkspace(login: LoginWorkspace, id: string | undefined) {
-  const key = `web-terminal:session:${login.loginId}`;
-  if (id && id !== login.id) {
-    workspaceChoices.set(login.loginId, id);
-    try { sessionStorage.setItem(key, id); } catch {}
-  } else {
-    workspaceChoices.delete(login.loginId);
-    try { sessionStorage.removeItem(key); } catch {}
-  }
-}
-
-function terminalRoute(route: string, choices = workspaceChoices) {
-  const query = new URLSearchParams();
-  for (const login of logins) {
-    const id = choices.get(login.loginId);
-    if (id) query.append("workspace", id);
-  }
-  return query.size ? `${route}?${query}` : route;
-}
-
-function applyWorkspaceCatalog(catalog: WorkspaceCatalog) {
-  setAccounts(catalog);
-  for (const login of logins) {
-    const id = workspaceChoices.get(login.loginId);
-    if (id && !catalog.workspaces.some((workspace) => workspace.id === id && workspace.account === login.account)) pickWorkspace(login, undefined);
-  }
-  return catalog.workspaces;
-}
-
-async function loadWorkspaces() {
-  const root = consoleEl;
-  const catalog = await api<WorkspaceCatalog>("workspaces");
-  return root && root === consoleEl ? applyWorkspaceCatalog(catalog) : [];
-}
-
-async function switchWorkspace(workspace: WorkspaceInfo) {
-  const login = logins.find((entry) => entry.account === workspace.account);
-  if (!login) throw new Error(t("sessionsUnavailable"));
-  const root = consoleEl;
-  const choices = new Map(workspaceChoices).set(login.loginId, workspace.id);
-  const next = await api<TerminalInfo[]>(terminalRoute("terminals", choices));
-  if (!root || root !== consoleEl || !logins.some((entry) => entry.loginId === login.loginId)) return;
-  pickWorkspace(login, workspace.id);
-  listVersion++;
-  applyTerminals(next);
-  const tabs = next.filter((terminal) => terminal.workspace === workspace.id);
-  const remembered = recall(`${LAST}:${workspace.id}`);
-  const target = tabs.find((terminal) => terminal.id === remembered) ?? tabs[0];
-  hideWorkspacePanel();
-  if (target) select(target.id);
-  else {
-    current()?.hide();
-    currentId = null;
-    emptyAccount = workspace.account;
-    settle();
-    renderTabs();
-  }
 }
 
 /** Signs this browser in to one more account from the settings panel. Resolves to
@@ -405,7 +322,7 @@ async function showConsole(me: SessionInfo) {
   }, icon("plus"));
   tabsEl.append(inkEl, newButton);
   openButton = h("button", { class: "primary", text: t("openShell"), attrs: { type: "button" }, on: {
-    click: () => emptyAccount ? void create(emptyAccount) : openNew(),
+    click: openNew,
   } });
   emptyEl = h(
     "div",
@@ -423,27 +340,8 @@ async function showConsole(me: SessionInfo) {
     h("p", { class: "hint" }, h("span", { text: t("chooseByNumber") }), h("span", { text: t("chooseBack") })),
   );
   chooseEl.hidden = true;
-  workspacePanel = buildWorkspacePanel({
-    list: loadWorkspaces,
-    current: (account) => {
-      const login = logins.find((entry) => entry.account === account);
-      return login && (workspaceChoices.get(login.loginId) ?? login.id);
-    },
-    open: switchWorkspace,
-    create: (account, name) => api<WorkspaceInfo>("workspaces", { method: "POST", body: { account, name } }),
-    rename: (id, name) => api<WorkspaceInfo>(`workspaces/${id}`, { method: "PATCH", body: { name } }),
-    remove: async (id) => {
-      const root = consoleEl;
-      const catalog = await api<WorkspaceCatalog>(`workspaces/${id}`, { method: "DELETE" });
-      if (!root || root !== consoleEl) return [];
-      const rows = applyWorkspaceCatalog(catalog);
-      await refresh();
-      return rows;
-    },
-    close: closeWorkspacePanel,
-  });
   filePanel = buildFilesPanel({ request: api, close: closeFilePanel, unauthorized: () => showLogin(t("signInAgain")) });
-  stageEl = h("div", { class: "stage" }, emptyEl, chooseEl, workspacePanel.element, filePanel.element);
+  stageEl = h("div", { class: "stage" }, emptyEl, chooseEl, filePanel.element);
   statusEl = h("span", { class: "status", attrs: { role: "status" } }, h("i", { class: "dot" }), h("span", {}));
   keysEl = buildKeyBar({
     send: (data) => current()?.key(data),
@@ -454,7 +352,7 @@ async function showConsole(me: SessionInfo) {
 
   const close = () => {
     panel.close();
-    if (workspacePanel.element.hidden && filePanel.element.hidden) current()?.focus();
+    if (filePanel.element.hidden) current()?.focus();
   };
   const built = buildPanel(
     {
@@ -511,11 +409,6 @@ async function showConsole(me: SessionInfo) {
   }, icon("select"));
   onTap(touchSelectButton, () => current()?.toggleTouchSelection());
   touchSelectButton.hidden = true;
-  workspaceButton = h("button", {
-    class: "tool", attrs: { type: "button", "aria-label": t("sessions"), title: t("sessions"), "aria-expanded": "false" },
-  }, icon("sessions"));
-  workspaceButton.hidden = !logins.length;
-  onTap(workspaceButton, toggleWorkspacePanel);
   fileButton = h("button", {
     class: "tool", attrs: { type: "button", "aria-label": t("files"), title: t("files"), "aria-expanded": "false" },
   }, icon("folder"));
@@ -523,7 +416,7 @@ async function showConsole(me: SessionInfo) {
   const root = h(
     "div",
     { class: "app" },
-    h("header", { class: "strip" }, tabsEl, statusEl, copyButton, touchSelectButton, workspaceButton, fileButton, settingsButton),
+    h("header", { class: "strip" }, tabsEl, statusEl, copyButton, touchSelectButton, fileButton, settingsButton),
     stageEl,
     keysEl,
     panel,
@@ -537,7 +430,7 @@ async function showConsole(me: SessionInfo) {
     "paste",
     (event) => {
       const shell = current();
-      if (!shell || panel.open || !workspacePanel.element.hidden || !filePanel.element.hidden || event.defaultPrevented) return;
+      if (!shell || panel.open || !filePanel.element.hidden || event.defaultPrevented) return;
       const target = event.target;
       if (target instanceof HTMLElement && target.matches("input, textarea, select, [contenteditable]")) return;
       if (target instanceof Node && shell.term.element?.contains(target)) return;
@@ -575,33 +468,6 @@ function current(): Shell | undefined {
   return currentId ? shells.get(currentId) : undefined;
 }
 
-function hideWorkspacePanel() {
-  workspacePanel.element.hidden = true;
-  workspaceButton.setAttribute("aria-expanded", "false");
-  showKeys();
-}
-
-function closeWorkspacePanel() {
-  hideWorkspacePanel();
-  current()?.show(!coarse.matches);
-  settle();
-  if (coarse.matches || !current()) workspaceButton.focus({ preventScroll: true });
-  paintStatus();
-}
-
-function toggleWorkspacePanel() {
-  if (!workspacePanel.element.hidden) return closeWorkspacePanel();
-  const preferred = currentAccount() ?? emptyAccount;
-  if (!filePanel.element.hidden) hideFilePanel();
-  current()?.hide();
-  emptyEl.hidden = true;
-  chooseEl.hidden = true;
-  workspacePanel.show(accounts, preferred);
-  workspaceButton.setAttribute("aria-expanded", "true");
-  showKeys();
-  paintStatus();
-}
-
 function hideFilePanel() {
   filePanel.element.hidden = true;
   fileButton.setAttribute("aria-expanded", "false");
@@ -618,8 +484,7 @@ function closeFilePanel() {
 
 function toggleFilePanel() {
   if (!filePanel.element.hidden) return closeFilePanel();
-  const preferred = currentAccount() ?? emptyAccount;
-  if (!workspacePanel.element.hidden) hideWorkspacePanel();
+  const preferred = currentAccount();
   current()?.hide();
   emptyEl.hidden = true;
   chooseEl.hidden = true;
@@ -635,8 +500,7 @@ function toggleFilePanel() {
  */
 function openNew() {
   if (!filePanel.element.hidden) closeFilePanel();
-  if (!workspacePanel.element.hidden) closeWorkspacePanel();
-  if (accounts.length < 2) return void create(currentAccount() ?? emptyAccount);
+  if (accounts.length < 2) return void create(currentAccount());
   current()?.hide();
   emptyEl.hidden = true;
   const buttons = accounts.map((account, index) =>
@@ -697,17 +561,7 @@ function currentAccount(): string | undefined {
 
 async function refresh() {
   const version = ++listVersion;
-  const route = terminalRoute("terminals");
-  let next: TerminalInfo[];
-  try {
-    next = await api<TerminalInfo[]>(route);
-  } catch (error) {
-    if (version !== listVersion) return;
-    if (!(error instanceof HttpFailure && error.status === 404 && route.includes("?"))) throw error;
-    await loadWorkspaces();
-    if (version !== listVersion) return;
-    next = await api<TerminalInfo[]>(terminalRoute("terminals"));
-  }
+  const next = await api<TerminalInfo[]>("terminals");
   if (version === listVersion) applyTerminals(next);
 }
 
@@ -721,18 +575,17 @@ function applyTerminals(next: TerminalInfo[]) {
   }
   // Every tab stays connected, so one in the background can say when its program finishes.
   for (const terminal of terminals)
-    if (!shells.has(terminal.id)) shells.set(terminal.id, new Shell(terminal.id, stageEl, host, terminal.workspace));
+    if (!shells.has(terminal.id)) shells.set(terminal.id, new Shell(terminal.id, stageEl, host));
   if (currentId && !terminals.some((terminal) => terminal.id === currentId)) currentId = null;
   renderTabs();
 }
 
 /** Makes sure a tab is showing: the current one, the last used, or the first. */
 function settle() {
-  if (!consoleEl || !workspacePanel.element.hidden || !filePanel.element.hidden || !chooseEl.hidden) return;
+  if (!consoleEl || !filePanel.element.hidden || !chooseEl.hidden) return;
   if (currentId) return;
   const remembered = recall(LAST);
-  const candidates = emptyAccount && accounts.includes(emptyAccount) ? terminals.filter((terminal) => terminal.account === emptyAccount) : terminals;
-  const target = candidates.find((terminal) => terminal.id === remembered) ?? candidates[0];
+  const target = terminals.find((terminal) => terminal.id === remembered) ?? terminals[0];
   if (target) return select(target.id);
   emptyEl.hidden = false;
   paintStatus();
@@ -749,13 +602,10 @@ function select(id: string) {
   // shell is resized and redrawn, then again when it goes down.
   const focus = !coarse.matches || !!previous?.typing();
   currentId = id;
-  emptyAccount = undefined;
   marks.delete(id);
   remember(LAST, id);
-  if (terminal.workspace) remember(`${LAST}:${terminal.workspace}`, id);
   emptyEl.hidden = true;
   chooseEl.hidden = true;
-  if (!workspacePanel.element.hidden) hideWorkspacePanel();
   if (!filePanel.element.hidden) hideFilePanel();
   shell.show(focus);
   // Hidden only now, so focus passes straight from one shell to the other and a
@@ -780,7 +630,7 @@ async function create(account?: string) {
   try {
     const size = current()?.term;
     const systemUser = userFor(account ?? accounts[0] ?? "");
-    const made = await api<TerminalInfo>(terminalRoute("terminals"), {
+    const made = await api<TerminalInfo>("terminals", {
       method: "POST",
       body: { dark: activeTheme().dark, ...(size && { cols: size.cols, rows: size.rows }), ...(account && { account }), ...(systemUser && { systemUser }) },
     });
@@ -816,7 +666,7 @@ async function end(id: string) {
   deleting.add(id);
   renderTabs();
   try {
-    await api(terminalRoute(`terminals/${id}`), { method: "DELETE" });
+    await api(`terminals/${id}`, { method: "DELETE" });
   } catch (error) {
     if (!(error instanceof HttpFailure && error.status === 404)) return handleError(error);
   } finally {
@@ -838,7 +688,7 @@ function startRename(info: TerminalInfo, label: HTMLElement) {
     const name = input.value.trim();
     if (save && name !== shown(info)) {
       try {
-        Object.assign(info, await api<TerminalInfo>(terminalRoute(`terminals/${info.id}`), { method: "PATCH", body: { name } }));
+        Object.assign(info, await api<TerminalInfo>(`terminals/${info.id}`, { method: "PATCH", body: { name } }));
       } catch (error) {
         handleError(error);
       }

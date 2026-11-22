@@ -42,15 +42,8 @@ printf '%s\n' "$PASSWORD" | WEB_TERMINAL_USERNAME=alice npm run passwd
   accounts together.
 - Every sign-in to an account sees the same terminals, on any device. For a
   separate set of terminals, sign in to a different account.
-- A session holds a group of terminal tabs. Each account starts in its default
-  session. Use **Sessions** in the toolbar to open another of the account's
-  sessions, or create, rename, and delete sessions. Deletion asks for
-  confirmation and closes the terminals in that session; the default session
-  stays, empty.
-- A browser tab remembers its session choice across reloads. Switching leaves
-  the other session's shells running. Opening the same session in two browser
-  tabs connects both to the same shells. Reconnecting restores the screen,
-  scrollback, cursor, and program modes.
+- Opening the terminals in two browser tabs connects both to the same shells.
+  Reconnecting restores the screen, scrollback, cursor, and program modes.
 - Signing out removes the account from that browser only. Its shells keep
   running and come back with the next sign-in.
 
@@ -108,7 +101,7 @@ signed-in account. Choose **Done** to return to the terminal.
 File operations run as the same operating-system user as the account's
 shells; an account allowed several system users picks one at the top of the
 panel. Home is the starting location. You can enter other paths that this
-user can access. Sessions under the same account share that filesystem.
+user can access.
 
 ## Deployment
 
@@ -141,7 +134,7 @@ supplies the client address for sign-in throttling.
 
 The [Build workflow](https://github.com/lemonhub-io/web-terminal/actions/workflows/build.yml)
 runs on pushes to `main`, pull requests, and manual dispatch. It builds the
-client from the lockfile and checks session switching, touch selection,
+client from the lockfile, typechecks it, and checks touch selection,
 clipboard behavior, and file navigation in Chromium. The
 `web-terminal-client` artifact contains the contents of `client/dist/`.
 Use an artifact from a successful run for the revision you are deploying.
@@ -184,16 +177,16 @@ server checkout and install the client artifact for that revision. Restart
 `web-terminal` to load the server code and client together. File requests
 run in the web service, and the shell host keeps its existing terminals.
 
-Upgrading from the version that gave each sign-in its own default session
-folds those sessions into the account's default session, together with shells
-started before sessions existed. Nothing in the shell host changes.
+Upgrading from the version that gave each sign-in its own terminals hands
+them back to the account, together with shells started before that version.
+Nothing in the shell host changes.
 
 ## Configuration and security
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `WEB_TERMINAL_PORT` | `3120` | Loopback HTTP port for the web service |
-| `WEB_TERMINAL_MAX` | `8` | Maximum concurrent terminals per session, enforced by the shell host |
+| `WEB_TERMINAL_MAX` | `8` | Maximum concurrent terminals per account, enforced by the shell host |
 | `WEB_TERMINAL_DATA` | `var/` in the checkout | Directory for the private socket and the `secrets/` directory |
 | `WEB_TERMINAL_USERNAME` | Prompted interactively | Account name for `npm run passwd` |
 | `WEB_TERMINAL_SYSTEM_USER` | Prompted interactively | Optional operating-system user for that account |
@@ -262,7 +255,7 @@ and the matching ChromeDriver.
 
 | Path | Contents |
 |---|---|
-| `client/` | Terminal UI, session picker, file manager, themes, settings, clipboard, and touch input |
+| `client/` | Terminal UI, file manager, themes, settings, clipboard, and touch input |
 | `server/` | Auth, HTTP and WebSocket API, shell host, file worker, and server tests |
 | `shared/` | File manager request and response types |
 | `deploy/` | Example systemd user units and Caddy configuration |

@@ -9,21 +9,17 @@ import { Assets } from "../server/assets.ts";
 const text = "SELECTIONCHECK";
 const line = `${text} EXTRA`;
 const main = { id: "aaaaaaaaaaaaaaaa", account: "test", name: "Main", created: 0 };
-const review = { id: "bbbbbbbbbbbbbbbb", account: "test", name: "Review", created: 1 };
 const session = { username: "test", accounts: ["test"], logins: [{ account: "test", loginId: main.id, id: main.id }] };
-const reviewTerminal = "000000000000000000000002";
 const assets = new Assets("client/dist");
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname === "/api/session" || url.pathname === "/api/workspaces") {
     res.setHeader("Content-Type", "application/json");
-    return res.end(JSON.stringify({ ...session, workspaces: [main, review] }));
+    return res.end(JSON.stringify({ ...session, workspaces: [main] }));
   }
   if (url.pathname === "/api/terminals") {
-    const selected = url.searchParams.get("workspace") === review.id ? review : main;
-    const id = selected === review ? reviewTerminal : "000000000000000000000001";
     res.setHeader("Content-Type", "application/json");
-    return res.end(JSON.stringify([{ id, account: "test", workspace: selected.id, title: selected.name, name: "", created: 0, clients: 1 }]));
+    return res.end(JSON.stringify([{ id: "000000000000000000000001", account: "test", workspace: main.id, title: main.name, name: "", created: 0, clients: 1 }]));
   }
   if (url.pathname === "/api/files") {
     const account = url.searchParams.get("account");
@@ -42,13 +38,11 @@ const server = createServer(async (req, res) => {
 const sockets = new WebSocketServer({ server });
 const writes = [];
 let size;
-sockets.on("connection", (socket, req) => {
-  const url = new URL(req.url, "http://localhost");
-  const inReview = url.pathname.endsWith(reviewTerminal) && url.searchParams.get("workspace") === review.id;
+sockets.on("connection", (socket) => {
   socket.send(JSON.stringify({ type: "snapshot", cols: 80, rows: 24, data: line + "\x1b[?1000h\x1b[?1006h" }));
   socket.on("message", (data, binary) => {
     if (binary) writes.push(data.toString());
-    else if (inReview) size = JSON.parse(data.toString());
+    else size = JSON.parse(data.toString());
   });
 });
 
@@ -108,13 +102,7 @@ try {
   await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
   await send("Page.navigate", { url: origin });
   await waitFor(() => evaluate('Boolean(document.querySelector(".xterm.enable-mouse-events"))'), "Initial session did not open");
-  await tap('button[aria-label="Sessions"]');
-  const reviewRow = '.workspace-open[title="Review"]';
-  await waitFor(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(reviewRow)}))`), "Session list did not show Review");
-  await tap(reviewRow);
-  await waitFor(() => size?.cols, "Review did not open its terminal in the selected session");
-  assert.equal(await evaluate(`sessionStorage.getItem("web-terminal:session:${main.id}")`), review.id);
-  assert.equal(await evaluate('document.querySelector(".tab-label[aria-selected=true]").textContent'), "Review");
+  await waitFor(() => size?.cols, "The terminal did not report its size");
   const screen = 'document.querySelector(".xterm.enable-mouse-events .xterm-screen")';
   await waitFor(() => evaluate(`Boolean(${screen})`), "Terminal did not enter mouse mode");
   const { left, top, width, height } = await evaluate(`${screen}.getBoundingClientRect().toJSON()`);
@@ -166,7 +154,7 @@ try {
   const download = await waitFor(() => evaluate(`document.querySelector(${JSON.stringify(report)})?.getAttribute("href")`), "Opening Reports did not show its file");
   const parameters = new URL(download, origin).searchParams;
   assert.deepEqual(Object.fromEntries(parameters), { account: "test", path: "/home/test/Reports", name: "report.txt" });
-  console.log("Session switching, touch selection, and file navigation passed in the phone browser");
+  console.log("Touch selection and file navigation passed in the phone browser");
 } finally {
   if (sessionId) await driverRequest(`/session/${sessionId}`, undefined, "DELETE").catch(() => {});
   driver.kill();

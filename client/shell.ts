@@ -108,7 +108,7 @@ export class Shell {
   /** Whether the program asked to be told when the color scheme changes (mode 2031). */
   private schemeReports = false;
 
-  constructor(id: string, stage: HTMLElement, host: ShellHost, private readonly workspace?: string) {
+  constructor(id: string, stage: HTMLElement, host: ShellHost) {
     this.id = id;
     this.host = host;
     this.mount = h("div", { class: "term" });
@@ -352,8 +352,7 @@ export class Shell {
 
   private connect() {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    const query = this.workspace ? `?${new URLSearchParams({ workspace: this.workspace })}` : "";
-    const socket = new WebSocket(`${scheme}//${location.host}/ws/terminals/${this.id}${query}`);
+    const socket = new WebSocket(`${scheme}//${location.host}/ws/terminals/${this.id}`);
     socket.binaryType = "arraybuffer";
     this.socket = socket;
     socket.onmessage = (event) => {
