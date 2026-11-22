@@ -565,7 +565,7 @@ select {
   background: var(--wash);
 }
 
-@media (any-pointer: coarse) {
+@media (pointer: coarse) {
   .tool.touch-select-button {
     display: grid;
   }
