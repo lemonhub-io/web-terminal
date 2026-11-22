@@ -40,17 +40,19 @@ printf '%s\n' "$PASSWORD" | WEB_TERMINAL_USERNAME=alice npm run passwd
 - Use **Settings** → **Sign in to another account** to sign in to up to eight
   accounts in one browser. The tab strip shows the terminals from those
   accounts together.
-- Each fresh sign-in opens its own session, even when several people use the
-  same account. A session holds a group of terminal tabs. Use **Sessions** in
-  the toolbar to view the sessions for a signed-in account, open a different
-  one, or create, rename, and delete sessions. Deletion asks for confirmation
-  and closes the terminals in that session.
+- Every sign-in to an account sees the same terminals, on any device. For a
+  separate set of terminals, sign in to a different account.
+- A session holds a group of terminal tabs. Each account starts in its default
+  session. Use **Sessions** in the toolbar to open another of the account's
+  sessions, or create, rename, and delete sessions. Deletion asks for
+  confirmation and closes the terminals in that session; the default session
+  stays, empty.
 - A browser tab remembers its session choice across reloads. Switching leaves
   the other session's shells running. Opening the same session in two browser
   tabs connects both to the same shells. Reconnecting restores the screen,
   scrollback, cursor, and program modes.
-- Signing out clears that browser login. The next sign-in starts a fresh
-  session, and **Sessions** still lists the account's saved sessions.
+- Signing out removes the account from that browser only. Its shells keep
+  running and come back with the next sign-in.
 
 ### Text selection and clipboard
 
@@ -181,11 +183,9 @@ server checkout and install the client artifact for that revision. Restart
 `web-terminal` to load the server code and client together. File requests
 run in the web service, and the shell host keeps its existing terminals.
 
-When upgrading from versions that used account-wide terminal tabs, save work
-and close old tabs before deploying. The upgraded app starts with a
-session-scoped terminal list. Legacy shells in an existing host remain
-running until they exit or the host stops. Existing isolated logins register
-their sessions when they reconnect after the session manager upgrade.
+Upgrading from the version that gave each sign-in its own default session
+folds those sessions into the account's default session, together with shells
+started before sessions existed. Nothing in the shell host changes.
 
 ## Configuration and security
 

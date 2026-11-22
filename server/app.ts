@@ -5,11 +5,11 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { errorMessage, logger } from "./log.ts";
 import type { Assets } from "./assets.ts";
-import { Auth, MAX_ACCOUNTS, terminalOwner, type Session, type SessionIdentity, type Throttle } from "./auth.ts";
+import { Auth, MAX_ACCOUNTS, type Session, type Throttle } from "./auth.ts";
 import { fileRoutes } from "./file-routes.ts";
 import { HttpError, statusOf } from "./http-error.ts";
 import type { TerminalInfo, TerminalOptions } from "./terminal.ts";
-import type { Workspaces } from "./workspaces.ts";
+import type { Scope, Workspaces } from "./workspaces.ts";
 
 const log = logger("term");
 
@@ -77,10 +77,12 @@ const terminalOptions = z.object({
 const terminalName = z.object({ name: z.string().max(200) });
 const workspaceName = z.object({ name: z.string().trim().min(1).max(60) });
 
-function publicTerminal(info: TerminalInfo, scopes: readonly SessionIdentity[]): TerminalInfo & { workspace: string } {
-  const account = scopes.find((entry) => terminalOwner(entry) === info.account);
-  if (!account) throw new HttpError(404, "Terminal not found");
-  return { ...info, account: account.username, workspace: account.loginId };
+const ownersIn = (scopes: readonly Scope[]) => scopes.flatMap((scope) => scope.owners);
+
+function publicTerminal(info: TerminalInfo, scopes: readonly Scope[]): TerminalInfo & { workspace: string } {
+  const scope = scopes.find((entry) => entry.owners.includes(info.account));
+  if (!scope) throw new HttpError(404, "Terminal not found");
+  return { ...info, account: scope.username, workspace: scope.workspace };
 }
 
 async function readCredentials(c: { req: { json: () => Promise<unknown> } }) {
@@ -187,7 +189,7 @@ export function createTermApp({ auth, throttle, terminals, assets, workspaces }:
   api.delete("/workspaces/:id", async (c) => {
     const session = c.get("session");
     await workspaces.run(session, c.req.param("id"), async (workspace) => {
-      const owners = [terminalOwner({ username: workspace.account, loginId: workspace.id })];
+      const owners = workspaces.owners(session, workspace.id);
       for (const { id } of await terminals.list(owners)) {
         try {
           await terminals.kill(id, owners);
@@ -201,7 +203,7 @@ export function createTermApp({ auth, throttle, terminals, assets, workspaces }:
   });
   api.get("/terminals", async (c) => {
     const scopes = scopesFor(c);
-    const list = await terminals.list(scopes.map(terminalOwner));
+    const list = await terminals.list(ownersIn(scopes));
     return c.json(list.map((info) => publicTerminal(info, scopes)));
   });
   api.post("/terminals", async (c) => {
@@ -211,19 +213,19 @@ export function createTermApp({ auth, throttle, terminals, assets, workspaces }:
     const scopes = scopesFor(c);
     const owner = account === undefined ? scopes[0] : scopes.find((entry) => entry.username === account);
     if (!owner) throw new HttpError(403, "Sign in to that account first");
-    const info = await workspaces.run(session, owner.loginId, () =>
-      terminals.create({ ...size, ...(owner.systemUser ? { systemUser: owner.systemUser } : {}) }, terminalOwner(owner)));
+    const info = await workspaces.run(session, owner.workspace, () =>
+      terminals.create({ ...size, ...(owner.systemUser ? { systemUser: owner.systemUser } : {}) }, owner.owner));
     return c.json(publicTerminal(info, scopes));
   });
   api.patch("/terminals/:id", async (c) => {
     const body = terminalName.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) throw new HttpError(400, "Give the terminal a name of up to 200 characters");
     const scopes = scopesFor(c);
-    const info = await terminals.rename(c.req.param("id"), body.data.name, scopes.map(terminalOwner));
+    const info = await terminals.rename(c.req.param("id"), body.data.name, ownersIn(scopes));
     return c.json(publicTerminal(info, scopes));
   });
   api.delete("/terminals/:id", async (c) => {
-    await terminals.kill(c.req.param("id"), scopesFor(c).map(terminalOwner));
+    await terminals.kill(c.req.param("id"), ownersIn(scopesFor(c)));
     return c.json({ ok: true });
   });
 

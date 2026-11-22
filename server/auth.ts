@@ -52,10 +52,6 @@ const identity = (account: Account): Omit<SessionIdentity, "loginId"> => ({
   ...(account.systemUser ? { systemUser: account.systemUser } : {}),
 });
 
-/** The shell host treats owners as opaque keys. Keep the account name separate for display. */
-export const terminalOwner = (account: SessionIdentity) => `login:${account.loginId}:${account.username}`;
-export const terminalOwners = (session: Session) => session.accounts.map(terminalOwner);
-
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
   const key = await scryptAsync(password, salt, 32, SCRYPT);

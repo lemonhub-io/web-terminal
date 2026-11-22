@@ -8,7 +8,7 @@ import { WebSocketServer } from "ws";
 import { config } from "./config.ts";
 import { errorMessage, logger } from "./log.ts";
 import { Assets } from "./assets.ts";
-import { Auth, terminalOwner, Throttle } from "./auth.ts";
+import { Auth, Throttle } from "./auth.ts";
 import { HostClient } from "./host-client.ts";
 import { createTermApp, sameOrigin } from "./app.ts";
 import { Workspaces } from "./workspaces.ts";
@@ -39,7 +39,7 @@ server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
   const match = /^\/ws\/terminals\/([a-f0-9]{24})$/.exec(url.pathname);
   if (!match) return refuse("404 Not Found");
   try {
-    const owners = workspaces.select(session, url.searchParams.getAll("workspace")).map(terminalOwner);
+    const owners = workspaces.select(session, url.searchParams.getAll("workspace")).flatMap((scope) => scope.owners);
     sockets.handleUpgrade(req, socket, head, (ws) => terminals.attach(match[1]!, ws, owners));
   } catch (error) {
     if (error instanceof HttpError) return refuse(error.status === 404 ? "404 Not Found" : "400 Bad Request");

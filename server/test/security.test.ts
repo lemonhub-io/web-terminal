@@ -7,7 +7,7 @@ import type { IncomingMessage } from "node:http";
 import type { WebSocket } from "ws";
 import { clientAddress, createTermApp, sameOrigin } from "../app.ts";
 import { Assets } from "../assets.ts";
-import { Auth, terminalOwners, Throttle } from "../auth.ts";
+import { Auth, Throttle } from "../auth.ts";
 import { Terminals } from "../terminal.ts";
 import { Workspaces } from "../workspaces.ts";
 
@@ -69,14 +69,19 @@ test("Auth keeps one token per account and drops only the one whose password cha
   }
 });
 
-test("Each login has its own shells, including when two browsers sign in as the same account", async () => {
+test("Every sign-in to an account shares its shells; other accounts stay apart", async () => {
   process.env.SHELL = "/bin/sh";
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wt-app-"));
-  const terminals = new Terminals(2);
+  const terminals = new Terminals(8);
   try {
     const auth = new Auth(dir);
     await auth.setAccount("a", "pa");
     await auth.setAccount("b", "pb");
+    // A shell from before workspaces, and one from a per-login default saved by an earlier version.
+    const legacy = terminals.create({ cols: 80, rows: 24 }, "b");
+    const perLogin = terminals.create({ cols: 80, rows: 24 }, "login:oldhomeoldhomeold:b");
+    fs.writeFileSync(path.join(dir, "workspaces.json"),
+      JSON.stringify([{ id: "oldhomeoldhomeold", account: "b", name: "", created: 1, home: "oldhomeoldhomeold" }]));
     const workspaces = new Workspaces(dir);
     const app = createTermApp({ auth, throttle: new Throttle(), terminals, assets: new Assets(dir), workspaces });
     const browser = () => {
@@ -97,6 +102,7 @@ test("Each login has its own shells, including when two browsers sign in as the 
       };
       return { call, cookie: () => Auth.read(cookie) };
     };
+    const ids = (list: { id: string }[]) => list.map((info) => info.id).sort();
     const first = browser();
     const other = browser();
     const { call } = first;
@@ -107,61 +113,50 @@ test("Each login has its own shells, including when two browsers sign in as the 
     assert.deepEqual((await call("POST", "session", { username: "b", password: "pb" })).data.accounts, ["a", "b"]);
     const made = (await call("POST", "terminals", { account: "b", cols: 80, rows: 24 })).data;
     assert.equal(made.account, "b");
-    assert.deepEqual((await call("GET", "terminals")).data.map((info: { id: string }) => info.id), [made.id]);
+    const mine = (await call("POST", "terminals", { account: "a", cols: 80, rows: 24 })).data;
+    assert.deepEqual(ids((await call("GET", "terminals")).data), ids([made, mine, legacy, perLogin]));
 
+    // Another browser signed in to b alone sees all of b's shells and none of a's.
     assert.equal((await other.call("POST", "session", { username: "b", password: "pb" })).status, 200);
-    assert.deepEqual((await other.call("GET", "terminals")).data, []);
-    assert.equal((await other.call("PATCH", `terminals/${made.id}`, { name: "Other" })).status, 404);
-    assert.equal((await other.call("DELETE", `terminals/${made.id}`)).status, 404);
+    const shared = (await other.call("GET", "terminals")).data;
+    assert.deepEqual(ids(shared), ids([made, legacy, perLogin]));
+    assert.ok(shared.every((info: { account: string; workspace: string }) => info.account === "b" && info.workspace === made.workspace));
+    assert.equal((await other.call("PATCH", `terminals/${made.id}`, { name: "Shared" })).data.name, "Shared");
+    assert.equal((await other.call("PATCH", `terminals/${mine.id}`, { name: "Other" })).status, 404);
+    assert.equal((await other.call("DELETE", `terminals/${mine.id}`)).status, 404);
     let closeCode: number | undefined;
     const socket = { close: (code: number) => { closeCode = code; } };
-    terminals.attach(made.id, socket as WebSocket, terminalOwners(auth.verify(other.cookie())!));
+    const otherOwners = workspaces.select(auth.verify(other.cookie())!, []).flatMap((scope) => scope.owners);
+    terminals.attach(mine.id, socket as WebSocket, otherOwners);
     assert.equal(closeCode, 4004);
-    const renamed = await call("PATCH", `terminals/${made.id}`, { name: "Mine" });
-    assert.equal(renamed.data.name, "Mine");
-    assert.equal(renamed.data.account, "b");
-
-    const session = auth.verify(first.cookie())!;
-    const renewed = auth.verify(first.cookie(), Date.now() + 31 * 86400_000)!;
-    assert.equal(renewed.changed, true);
-    assert.deepEqual(terminalOwners(renewed), terminalOwners(session));
-    assert.equal((await call("POST", "session", { username: "b", password: "pb" })).status, 200);
-    assert.deepEqual(terminalOwners(auth.verify(first.cookie())!), terminalOwners(session));
-
-    const listed = (await other.call("GET", "workspaces")).data.workspaces;
-    assert.equal(listed.length, 2);
-    assert.ok(listed.some((entry: { id: string }) => entry.id === made.workspace));
-    const scoped = `?workspace=${made.workspace}`;
-    assert.deepEqual((await other.call("GET", `terminals${scoped}`)).data.map((info: { id: string }) => info.id), [made.id]);
-    assert.deepEqual((await other.call("GET", "terminals")).data, []);
-    const allowed = workspaces.select(auth.verify(other.cookie())!, [made.workspace]);
-    assert.deepEqual(terminalOwners({ ...session, accounts: allowed }), terminalOwners(session).slice(1));
+    // A tab that still names the folded per-login default lands in the shared one.
+    assert.deepEqual(ids((await other.call("GET", "terminals?workspace=oldhomeoldhomeold")).data), ids(shared));
 
     const created = await other.call("POST", "workspaces", { account: "b", name: "Review" });
     assert.equal(created.status, 201);
     const workspace = created.data;
     assert.equal((await call("PATCH", `workspaces/${workspace.id}`, { name: "Release" })).data.name, "Release");
-    const fileReload = new Workspaces(dir);
-    assert.equal(fileReload.find(auth.verify(other.cookie())!, workspace.id).name, "Release");
-    const inNew = await other.call("POST", `terminals?workspace=${workspace.id}`, { account: "b" });
-    assert.equal(inNew.data.workspace, workspace.id);
+    assert.equal(new Workspaces(dir).find(auth.verify(other.cookie())!, workspace.id).name, "Release");
+    const inNew = (await other.call("POST", `terminals?workspace=${workspace.id}`, { account: "b" })).data;
+    assert.equal(inNew.workspace, workspace.id);
+    assert.deepEqual(ids((await call("GET", `terminals?workspace=${workspace.id}`)).data), ids([inNew, mine]));
+    assert.deepEqual(ids((await call("GET", "terminals")).data), ids([made, mine, legacy, perLogin]));
 
-    // Signing out of b keeps a and hides b's shell from this browser without ending it.
+    // Signing out of b keeps a and hides b's shells from this browser without ending them.
     assert.deepEqual((await call("DELETE", "session/b")).data.accounts, ["a"]);
-    assert.deepEqual((await call("GET", "terminals")).data, []);
-    assert.equal(terminals.list(terminalOwners(session)).length, 1);
-    assert.equal((await call("GET", `terminals${scoped}`)).status, 404);
+    assert.deepEqual(ids((await call("GET", "terminals")).data), [mine.id]);
+    assert.equal((await call("GET", `terminals?workspace=${workspace.id}`)).status, 404);
     assert.equal((await call("DELETE", `workspaces/${workspace.id}`)).status, 404);
     assert.equal((await other.call("DELETE", `workspaces/${workspace.id}`)).status, 200);
     assert.equal((await other.call("GET", `terminals?workspace=${workspace.id}`)).status, 404);
-    assert.deepEqual(terminals.list([`login:${workspace.id}:b`]), []);
-    assert.deepEqual((await other.call("GET", `terminals${scoped}`)).data.map((info: { id: string }) => info.id), [made.id]);
-    const otherSession = auth.verify(other.cookie())!;
-    const home = otherSession.accounts[0]!.loginId;
-    const removedHome = await other.call("DELETE", `workspaces/${home}`);
-    assert.equal(removedHome.status, 200);
-    assert.notEqual(removedHome.data.logins[0].id, home);
-    assert.equal((await other.call("GET", "session")).data.logins[0].id, removedHome.data.logins[0].id);
+    assert.equal(terminals.list([`login:${workspace.id}:b`]).length, 0);
+
+    // Clearing the default ends its shells and keeps the workspace.
+    const cleared = await other.call("DELETE", `workspaces/${made.workspace}`);
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.data.logins[0].id, made.workspace);
+    assert.deepEqual((await other.call("GET", "terminals")).data, []);
+    assert.equal(terminals.list(["a"]).length, 1);
   } finally {
     terminals.close();
     fs.rmSync(dir, { recursive: true, force: true });
