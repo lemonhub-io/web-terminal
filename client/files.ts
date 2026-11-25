@@ -5,7 +5,6 @@ import { language, t } from "./i18n.ts";
 interface FileRequest {
   method?: string;
   body?: unknown;
-  upload?: File;
   signal?: AbortSignal;
 }
 
@@ -16,9 +15,16 @@ interface Actions {
 }
 
 type Edit = { kind: "create" } | { kind: "rename" | "delete"; entry: FileEntry };
-type Upload = { files: File[]; account: string; user: string; path: string; controller: AbortController };
 /** A signed-in account acting as one of its system users ("" for its own when it has just one). */
 type Target = { account: string; user: string };
+type Upload = Target & {
+  files: File[];
+  path: string;
+  index: number;
+  uploaded: number;
+  controller?: AbortController;
+  paused?: { kind: "conflict" } | { kind: "error"; replace: boolean };
+};
 
 const date = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" });
 const number = new Intl.NumberFormat(language, { maximumFractionDigits: 1 });
@@ -26,6 +32,27 @@ function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   const power = Math.min(4, Math.floor(Math.log(bytes) / Math.log(1024)));
   return `${number.format(bytes / 1024 ** power)} ${["B", "KiB", "MiB", "GiB", "TiB"][power]}`;
+}
+
+async function sendFile(route: string, file: File, signal: AbortSignal, onProgress: (bytes: number) => void) {
+  signal.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    const abort = () => request.abort();
+    request.open("POST", `/api/${route}`);
+    request.responseType = "json";
+    request.upload.onprogress = (event) => onProgress(event.loaded);
+    request.upload.onload = () => onProgress(file.size);
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) resolve();
+      else reject(Object.assign(new Error(request.response?.error ?? t("uploadFailed")), { status: request.status }));
+    };
+    request.onerror = () => reject(new Error(t("uploadFailed")));
+    request.onabort = () => reject(signal.reason);
+    request.onloadend = () => signal.removeEventListener("abort", abort);
+    request.send(file);
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 export function buildFilesPanel(actions: Actions) {
@@ -40,21 +67,18 @@ export function buildFilesPanel(actions: Actions) {
   let busy = false;
   let loading: AbortController | undefined;
   let batch: Upload | undefined;
-  let conflict: string | undefined;
+  let fileDrag = 0;
   let disposed = false;
   const folders = new Map<string, string>();
 
   const status = h("p", { class: "file-status", attrs: { role: "status" } });
-  const conflictBox = h("div", { class: "file-conflict", attrs: { role: "group" } });
   const body = h("tbody");
   const fileInput = h("input", { attrs: { type: "file", multiple: "", "aria-label": t("uploadFiles") } });
   fileInput.hidden = true;
   fileInput.addEventListener("change", () => {
     const files = Array.from(fileInput.files ?? []);
     fileInput.value = "";
-    if (!page || !files.length || busy || batch) return;
-    batch = { files, account, user, path: page.path, controller: new AbortController() };
-    void upload(false);
+    startUpload(files);
   });
 
   const button = (text: string, click: () => void, className = "plain") => h("button", {
@@ -88,6 +112,31 @@ export function buildFilesPanel(actions: Actions) {
     body.querySelector("input")?.focus();
   });
   const addFiles = button(t("uploadFiles"), () => fileInput.click());
+  const uploadLabel = h("span", { attrs: { role: "status" } });
+  const uploadPosition = h("span", { class: "file-upload-count" });
+  const progress = h("progress", { attrs: { "aria-label": t("uploadProgress") } });
+  const uploadBytes = h("span", { attrs: { "aria-hidden": "true" } });
+  const uploadMeter = h("div", { class: "file-upload-meter" }, progress, uploadBytes);
+  const replaceFile = button(t("replaceFile"), () => void upload(true));
+  const retryFile = button(t("retryUpload"), () => {
+    if (batch?.paused?.kind === "error") void upload(batch.paused.replace);
+  });
+  const skipFile = button(t("skipFile"), () => {
+    if (!batch?.paused) return;
+    batch.index++;
+    void upload(false);
+  });
+  const cancelUpload = button(t("cancelUpload"), () => {
+    if (!batch) return;
+    if (batch.controller) {
+      cancelUpload.disabled = true;
+      batch.controller.abort();
+    } else void finishUpload(batch, true);
+  });
+  const uploadBox = h("div", { class: "file-upload", attrs: { hidden: "" } },
+    h("div", { class: "file-upload-heading" }, uploadLabel, uploadPosition), uploadMeter,
+    h("div", { class: "file-upload-actions" }, replaceFile, retryFile, skipFile, cancelUpload));
+  const dropHint = h("span", { class: "file-drop-hint", text: t("dropFiles"), attrs: { hidden: "" } });
   const home = tool("home", t("homeFolder"), () => void browse(page?.home));
   const up = tool("up", t("parentFolder"), () => {
     if (page) void browse(page.path.slice(0, page.path.lastIndexOf("/")) || "/");
@@ -128,9 +177,49 @@ export function buildFilesPanel(actions: Actions) {
       void browse(target);
     },
   } }, home, up, address, go, reload),
-  h("div", { class: "file-options" }, h("label", {}, toggler, h("span", { text: t("hiddenFiles") }))),
-  status, conflictBox, table, more, fileInput);
+  h("div", { class: "file-options" }, dropHint, h("label", {}, toggler, h("span", { text: t("hiddenFiles") }))),
+  status, uploadBox, table, more, fileInput);
   element.hidden = true;
+
+  element.addEventListener("dragenter", (event) => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    fileDrag++;
+    paintDrop();
+  });
+  element.addEventListener("dragover", (event) => {
+    const transfer = event.dataTransfer;
+    if (!transfer?.types.includes("Files")) return;
+    event.preventDefault();
+    transfer.dropEffect = canUpload() ? "copy" : "none";
+  });
+  element.addEventListener("dragleave", () => {
+    fileDrag = Math.max(0, fileDrag - 1);
+    paintDrop();
+  });
+  element.addEventListener("drop", (event) => {
+    const transfer = event.dataTransfer;
+    if (!transfer?.types.includes("Files")) return;
+    event.preventDefault();
+    fileDrag = 0;
+    paintDrop();
+    if (!canUpload()) return;
+    if ([...transfer.items].some((item) => item.webkitGetAsEntry?.()?.isDirectory)) {
+      message(t("chooseIndividualFiles"), true);
+      return;
+    }
+    startUpload([...transfer.files]);
+  });
+
+  function canUpload(): boolean {
+    return !!page && !busy && !loading && !batch;
+  }
+
+  function paintDrop() {
+    const active = fileDrag > 0 && canUpload();
+    dropHint.hidden = !active;
+    addFiles.classList.toggle("drop-target", active);
+  }
 
   function message(text: string, error = false) {
     status.textContent = text;
@@ -168,6 +257,7 @@ export function buildFilesPanel(actions: Actions) {
       folders.set(key(owner, as), next.path);
       address.value = next.path;
       message("");
+      return true;
     } catch (error) {
       if (!pending.signal.aborted && !disposed) report(error);
     } finally {
@@ -195,43 +285,86 @@ export function buildFilesPanel(actions: Actions) {
     }
   }
 
-  async function upload(replace: boolean) {
-    const upload = batch;
-    if (!upload || busy) return;
-    busy = true;
-    conflict = undefined;
+  function startUpload(files: File[]) {
+    if (!canUpload() || !files.length || !page) return;
+    batch = { files, account, user, path: page.path, index: 0, uploaded: 0 };
     paint();
-    let failure: unknown;
+    void upload(false);
+  }
+
+  function paintUpload(transfer: Upload, file: File) {
+    uploadBox.hidden = false;
+    uploadPosition.textContent = t("uploadPosition", { current: String(transfer.index + 1), total: String(transfer.files.length) });
+    uploadMeter.hidden = !!transfer.paused;
+    replaceFile.hidden = transfer.paused?.kind !== "conflict";
+    retryFile.hidden = transfer.paused?.kind !== "error";
+    skipFile.hidden = !transfer.paused;
+    cancelUpload.disabled = false;
+    if (transfer.paused) {
+      uploadLabel.textContent = t(transfer.paused.kind === "conflict" ? "replaceFileWarning" : "uploadFileFailed", { name: file.name });
+      return;
+    }
+    progress.max = file.size || 1;
+    updateProgress(file, 0);
+  }
+
+  function updateProgress(file: File, bytes: number) {
+    const sent = Math.min(bytes, file.size);
+    const text = t(sent < file.size ? "uploadingFile" : "finishingUpload", { name: file.name });
+    if (uploadLabel.textContent !== text) uploadLabel.textContent = text;
+    progress.value = file.size ? sent : 1;
+    uploadBytes.textContent = t("uploadBytes", { sent: formatSize(sent), total: formatSize(file.size) });
+  }
+
+  async function finishUpload(transfer: Upload, cancelled: boolean) {
+    if (disposed) return;
+    batch = undefined;
+    uploadBox.hidden = true;
+    const refreshed = await browse(transfer.path);
+    if (refreshed) message(cancelled ? t("uploadCancelled") : t("uploadDone", {
+      done: transfer.uploaded, total: transfer.files.length,
+    }));
+  }
+
+  async function upload(replace: boolean) {
+    const transfer = batch;
+    if (!transfer || transfer.controller) return;
+    const controller = new AbortController();
+    transfer.controller = controller;
+    transfer.paused = undefined;
+    message("");
     try {
-      while (upload.files.length) {
-        const file = upload.files[0]!;
-        message(t("uploadingFile", { name: file.name }));
-        try {
-          await actions.request(url("/upload", upload.account, upload.user, upload.path, {
-            name: file.name, size: String(file.size), ...(replace && { replace: "1" }),
-          }), { method: "POST", upload: file, signal: upload.controller.signal });
-        } catch (error) {
-          if ((error as { status?: number } | undefined)?.status === 409 && !replace) {
-            conflict = file.name;
-            return;
-          }
-          throw error;
-        }
-        upload.files.shift();
+      while (transfer.index < transfer.files.length) {
+        const file = transfer.files[transfer.index]!;
+        paintUpload(transfer, file);
+        await sendFile(url("/upload", transfer.account, transfer.user, transfer.path, {
+          name: file.name, size: String(file.size), ...(replace && { replace: "1" }),
+        }), file, controller.signal, (bytes) => {
+          if (!controller.signal.aborted) updateProgress(file, bytes);
+        });
+        transfer.index++;
+        transfer.uploaded++;
         replace = false;
       }
     } catch (error) {
-      failure = error;
-    } finally {
-      busy = false;
-      if (!conflict) batch = undefined;
-      if (!disposed) {
-        if (!conflict) await browse(upload.path);
-        else message("");
-        if (failure) report(failure);
-        paint();
+      if (disposed) return;
+      if (controller.signal.aborted) {
+        await finishUpload(transfer, true);
+        return;
       }
+      const status = (error as { status?: number } | undefined)?.status;
+      if (status === 401) return actions.unauthorized();
+      if (status === 409 && !replace) transfer.paused = { kind: "conflict" };
+      else {
+        transfer.paused = { kind: "error", replace };
+        report(error);
+      }
+      paintUpload(transfer, transfer.files[transfer.index]!);
+      return;
+    } finally {
+      transfer.controller = undefined;
     }
+    await finishUpload(transfer, false);
   }
 
   function form(action: Edit) {
@@ -298,25 +431,19 @@ export function buildFilesPanel(actions: Actions) {
     for (const seg of picker.children) (seg as HTMLButtonElement).disabled = disabled;
     address.disabled = go.disabled = toggler.disabled = disabled;
     folder.disabled = addFiles.disabled = disabled || !page;
+    paintDrop();
     home.disabled = reload.disabled = disabled;
     up.disabled = disabled || !page || page.path === "/";
     more.hidden = page?.next === undefined;
     more.disabled = disabled;
     for (const control of body.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")) control.disabled = disabled;
-    conflictBox.hidden = !conflict;
-    if (conflict) {
-      conflictBox.replaceChildren(h("span", { text: t("replaceFileWarning", { name: conflict }) }),
-        button(t("replaceFile"), () => void upload(true)), button(t("skipFile"), () => {
-          batch?.files.shift();
-          void upload(false);
-        }));
-    }
     if (!rows.length && page && !loading && !batch && !status.textContent) message(t("emptyFolder"));
   }
 
   return {
     element,
     show(accounts: readonly string[], preferred?: string, users: Record<string, string[]> = {}, preferredUser?: string) {
+      fileDrag = 0;
       targets = accounts.flatMap((name) => {
         const own = users[name] ?? [];
         return own.length > 1 ? own.map((as) => ({ account: name, user: as })) : [{ account: name, user: "" }];
@@ -350,13 +477,15 @@ export function buildFilesPanel(actions: Actions) {
     },
     /** Shows the panel again as it was left. */
     reveal() {
+      fileDrag = 0;
+      paintDrop();
       element.hidden = false;
       element.focus({ preventScroll: true });
     },
     dispose() {
       disposed = true;
       loading?.abort();
-      batch?.controller.abort();
+      batch?.controller?.abort();
     },
   };
 }

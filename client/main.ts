@@ -106,11 +106,11 @@ let openButton: HTMLButtonElement;
 // ------------------------------------------------------------ helpers
 
 /** Calls the same-origin API. Failures carry the server's own message. */
-async function api<T>(route: string, init: { method?: string; body?: unknown; upload?: File; signal?: AbortSignal } = {}): Promise<T> {
+async function api<T>(route: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
   const res = await fetch(`/api/${route}`, {
     method: init.method ?? "GET",
     headers: init.body === undefined ? {} : { "Content-Type": "application/json" },
-    body: init.upload ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
     signal: init.signal,
     credentials: "same-origin",
     cache: "no-store",

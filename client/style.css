@@ -850,7 +850,7 @@ select {
 .file-address,
 .file-options,
 .file-status,
-.file-conflict,
+.file-upload,
 .file-table {
   width: min(100%, 1000px);
   margin-inline: auto;
@@ -893,6 +893,15 @@ select {
   gap: 6px;
 }
 
+.file-drop-hint {
+  margin-inline-end: auto;
+}
+
+.file-head .drop-target {
+  background: var(--raised);
+  color: var(--accent);
+}
+
 .file-status {
   margin-block: 8px;
   color: var(--dim);
@@ -907,7 +916,45 @@ select {
   color: var(--bad);
 }
 
-.file-conflict,
+.file-upload {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--field);
+}
+
+.file-upload-heading,
+.file-upload-meter,
+.file-upload-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-upload-heading {
+  justify-content: space-between;
+  overflow-wrap: anywhere;
+}
+
+.file-upload-count,
+.file-upload-meter span {
+  flex: none;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.file-upload-meter progress {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.file-upload-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .file-edit {
   display: flex;
   align-items: center;
@@ -918,7 +965,6 @@ select {
   background: var(--field);
 }
 
-.file-conflict span,
 .file-edit span {
   flex: 1;
   overflow-wrap: anywhere;

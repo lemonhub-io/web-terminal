@@ -96,7 +96,7 @@ close button.
 |---|---|
 | Navigate | Open a folder, use **Home folder** or **Parent folder**, or enter an absolute path and choose **Go** |
 | Find an item | Use **Show hidden files** for dotfiles, **Load more** for large folders, and **Refresh files** to see changes made elsewhere |
-| Upload | Choose **Upload files** and select one or more files. Uploads run in order. Choose **Replace** or **Skip** if a name already exists |
+| Upload | Drop files into the Files tab or choose **Upload files**. The queue shows progress and can be canceled. Choose **Replace** or **Skip** for an existing name, or retry a failed file |
 | Download | Select a regular file by name to save it as a browser download |
 | Organize | Use **New folder**, or use the rename or delete action beside an item. Confirm deletion to permanently remove the item and, for a folder, its contents |
 
