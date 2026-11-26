@@ -96,7 +96,7 @@ close button.
 |---|---|
 | Navigate | Open a folder, use **Home folder** or **Parent folder**, or enter an absolute path and choose **Go** |
 | Find an item | Use **Show hidden files** for dotfiles, **Load more** for large folders, and **Refresh files** to see changes made elsewhere |
-| Upload | Drop files into the Files tab or choose **Upload files**. The queue shows progress and can be canceled. Choose **Replace** or **Skip** for an existing name, or retry a failed file |
+| Upload | Drop files into the Files tab or choose **Upload files**. Up to three files upload at once and share a progress bar. Choose **Replace** or **Skip** for an existing name, or retry a failed file |
 | Download | Select a regular file by name to save it as a browser download |
 | Organize | Use **New folder**, or use the rename or delete action beside an item. Confirm deletion to permanently remove the item and, for a folder, its contents |
 
@@ -223,6 +223,7 @@ or executable access problem. An access denied error indicates an operating
 system permission issue on the requested path.
 
 Uploads are streamed to a private temporary file in the destination folder.
+Files of 8 MiB or more are checked for a name conflict before sending data.
 Installing a new file uses a hard link so an existing name stays protected.
 An explicitly approved replacement uses a rename once the upload completes.
 Available disk space, filesystem capabilities, and proxy limits apply to

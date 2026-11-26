@@ -2,10 +2,10 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { finished } from "node:stream/promises";
 import type { FileJob, FileReply } from "../shared/files.ts";
 import type { SessionIdentity } from "./auth.ts";
+import { checkUpload, fileFailure, pipeUpload, writeUpload } from "./file-uploads.ts";
 import { HttpError } from "./http-error.ts";
 import { resolveSystemUser } from "./terminal.ts";
 
@@ -16,6 +16,26 @@ const environment = {
   LANG: "C.UTF-8",
 };
 const maxReply = 512 * 1024;
+
+export async function uploadJob(
+  account: SessionIdentity,
+  job: Extract<FileJob, { action: "upload" | "checkUpload" }>,
+  signal: AbortSignal,
+  input?: Readable,
+) {
+  if (account.systemUser && account.systemUser !== serviceUser) {
+    await fileJob(account, job, signal, input);
+    return;
+  }
+  const file = path.join(job.path, job.name);
+  try {
+    if (job.action === "checkUpload") await checkUpload(file);
+    else await writeUpload(file, job.size, job.replace, signal, input ?? Readable.from([]));
+  } catch (error) {
+    const [status, message] = fileFailure(error);
+    throw new HttpError(status, message);
+  }
+}
 
 async function readReply<T>(reader: ReadableStreamDefaultReader<Uint8Array>) {
   const pieces: Buffer[] = [];
@@ -41,7 +61,7 @@ export async function fileJob<T>(
   account: SessionIdentity,
   job: FileJob,
   signal: AbortSignal,
-  input?: ReadableStream<Uint8Array>,
+  input?: Readable,
 ): Promise<{ value: T; body?: ReadableStream<Uint8Array> }> {
   const target = account.systemUser && account.systemUser !== serviceUser ? resolveSystemUser(account.systemUser) : undefined;
   const home = target?.homedir ?? os.homedir();
@@ -61,7 +81,7 @@ export async function fileJob<T>(
   if (signal.aborted) abort();
   const cleanup = () => signal.removeEventListener("abort", abort);
   const transfer = input
-    ? pipeline(Readable.fromWeb(input as unknown as NodeReadableStream<Uint8Array>), child.stdin, { signal }).then(() => true, () => false)
+    ? pipeUpload(input, child.stdin, finished(child.stdin, { readable: false, cleanup: true, signal })).then(() => true, () => false)
     : undefined;
   if (!transfer) child.stdin.end();
   try {

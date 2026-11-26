@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import type { IncomingMessage } from "node:http";
+import { serve } from "@hono/node-server";
 import { createTermApp } from "../app.ts";
 import { Assets } from "../assets.ts";
 import { Auth, Throttle } from "../auth.ts";
@@ -11,6 +12,7 @@ import { Workspaces } from "../workspaces.ts";
 
 test("Files can be managed and transferred under the signed-in account", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wt-files-"));
+  let server: ReturnType<typeof serve> | undefined;
   try {
     const config = path.join(root, "secrets");
     const folder = path.join(root, "files");
@@ -25,14 +27,18 @@ test("Files can be managed and transferred under the signed-in account", async (
       assets: new Assets(path.join(root, "dist")),
       workspaces: new Workspaces(config),
     });
-    const incoming = { socket: { remoteAddress: "127.0.0.1" }, headers: {} } as IncomingMessage;
+    const origin = await new Promise<string>((resolve) => {
+      server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" }, (info: AddressInfo) => {
+        resolve(`http://127.0.0.1:${info.port}`);
+      });
+    });
     let cookie = "";
     const request = async (route: string, method = "GET", body?: unknown) => {
       const raw = body instanceof Uint8Array;
-      const headers = { Host: "localhost", Origin: "http://localhost", Cookie: cookie, "Content-Type": raw ? "application/octet-stream" : "application/json" };
-      const res = await app.request(`http://localhost/api/${route}`, {
+      const headers = { Origin: origin, Cookie: cookie, "Content-Type": raw ? "application/octet-stream" : "application/json" };
+      const res = await fetch(`${origin}/api/${route}`, {
         method, headers, body: raw ? Buffer.from(body) : body === undefined ? undefined : JSON.stringify(body),
-      }, { incoming, outgoing: {} as never });
+      });
       const set = res.headers.get("Set-Cookie");
       if (set) cookie = set.split(";")[0]!;
       return res;
@@ -49,8 +55,13 @@ test("Files can be managed and transferred under the signed-in account", async (
     const data = Buffer.alloc(128 * 1024);
     for (let i = 0; i < data.length; i++) data[i] = i % 251;
     const upload = route("/upload", { name: "报告.bin", size: String(data.length) });
+    assert.equal((await request(upload)).status, 204);
     assert.equal((await request(upload, "POST", data)).status, 201);
+    assert.equal((await request(upload)).status, 409);
     assert.equal((await request(route("/upload", { name: "报告.bin", size: "1" }), "POST", Buffer.of(0))).status, 409);
+    const malformed = route("/upload", { name: "unfinished.bin", size: "1" });
+    assert.equal((await request(malformed, "POST", data)).status, 400);
+    assert.deepEqual(fs.readdirSync(folder).sort(), ["Reports", "报告.bin"]);
     assert.deepEqual((await (await request(route())).json()).entries.map((entry: { name: string }) => entry.name), ["Reports", "报告.bin"]);
 
     const written = await request(route("/download", { name: "报告.bin" }));
@@ -62,6 +73,7 @@ test("Files can be managed and transferred under the signed-in account", async (
     assert.equal((await request("files/item", "DELETE", { ...location, name: "Reports" })).status, 200);
     assert.deepEqual((await (await request(route())).json()).entries.map((entry: { name: string }) => entry.name), ["archive.bin"]);
   } finally {
+    server?.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

@@ -1,11 +1,14 @@
+import type { HttpBindings } from "@hono/node-server";
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { FilePage } from "../shared/files.ts";
 import type { Session } from "./auth.ts";
-import { fileJob } from "./files.ts";
+import { fileJob, uploadJob } from "./files.ts";
 import { HttpError } from "./http-error.ts";
 
-type Env = { Variables: { session: Session } };
+type Env = { Bindings: HttpBindings; Variables: { session: Session } };
 const accountName = z.string().min(1).max(200);
 const absolutePath = z.string().max(4096).refine((value) => value.startsWith("/") && !value.includes("\0"));
 const itemName = z.string().min(1).max(255).refine((value) =>
@@ -56,11 +59,19 @@ export function fileRoutes() {
       headers: { "Content-Type": "application/octet-stream", "Content-Disposition": attachment(value.name), "Cache-Control": "no-store" },
     });
   });
+  files.get("/upload", async (c) => {
+    const { account: username, user, path, name } = parse(item, c.req.query());
+    await uploadJob(account(c, username, user), { action: "checkUpload", path, name }, c.req.raw.signal);
+    return c.body(null, 204);
+  });
   files.post("/upload", async (c) => {
     const { account: username, user, path, name, size, replace } = parse(incomingFile, c.req.query());
-    const body = c.req.raw.body;
-    if (!body && size) throw new HttpError(400, "Choose a file to upload");
-    await fileJob(account(c, username, user), { action: "upload", path, name, size, replace: replace === "1" }, c.req.raw.signal, body ?? undefined);
+    const identity = account(c, username, user);
+    let input: Readable | undefined;
+    if (c.env?.incoming instanceof Readable) input = c.env.incoming;
+    else if (c.req.raw.body) input = Readable.fromWeb(c.req.raw.body as unknown as NodeReadableStream<Uint8Array>);
+    if (!input && size) throw new HttpError(400, "Choose a file to upload");
+    await uploadJob(identity, { action: "upload", path, name, size, replace: replace === "1" }, c.req.raw.signal, input);
     return c.json({ ok: true }, 201);
   });
   files.post("/folders", async (c) => {

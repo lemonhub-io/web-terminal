@@ -16,6 +16,7 @@ export interface FilePage {
 export type FileJob =
   | { action: "list"; path?: string; offset: number; hidden: boolean }
   | { action: "download" | "mkdir" | "delete"; path: string; name: string }
+  | { action: "checkUpload"; path: string; name: string }
   | { action: "rename"; path: string; name: string; to: string }
   | { action: "upload"; path: string; name: string; size: number; replace: boolean };
 

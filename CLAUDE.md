@@ -17,7 +17,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - `server/terminal.ts` shell 会话，跑在宿主里。每个会话有一份无头 xterm 镜像，浏览器接入时发一帧 JSON 快照（屏幕、回滚、光标、模式），之后才是二进制实时输出。不要退回成原始字节回放：那会从转义序列中间开始、丢掉备用屏和鼠标模式，还会让旧的查询序列被重复应答。
 - `server/app.ts` 登录和终端管理 API。`server/main.ts` 校验 WebSocket 握手并交给宿主。`server/auth.ts` 管理 scrypt 密码和签名 cookie。`server/assets.ts` 预压缩并提供已构建的客户端。
 - `server/workspaces.ts` 保存按账号归属的会话目录，同一账号的所有登录看到同一份。每个账号有一个默认会话，新 shell 的归属键就是账号名，会话出现之前开的 shell 也因此留在这里；上一版按登录分开的默认会话在载入时并进来（`merged`），旧 id 仍指向它。其他会话的归属键是 `login:<会话 id>:<账号>`。宿主不能改 shell 的归属，要把 shell 转给别的账号，就停掉网页服务，在 `workspaces.json` 里给接收方的会话写 `keys`（第一个用于新 shell，全部都显示），并给原账号换一个不含这些键的默认会话。创建终端和删除会话按会话串行处理。
-- `server/file-routes.ts` 校验会话与账号后发送文件操作。`server/files.ts` 以对应 shell 用户的身份启动 `server/file-worker.ts`。上传和下载通过流传输，上传写完才在目标目录发布文件。
+- `server/file-routes.ts` 校验会话与账号后发送文件操作。`server/files.ts` 以对应 shell 用户的身份启动 `server/file-worker.ts`。网页服务用户自己的上传直接写入磁盘，切换系统用户时由文件子进程写入。两条路径共用流式写入和原子发布逻辑。
 - `client/shell.ts` 一个标签页：xterm、WebGL 渲染、键盘处理、重连。页面打开时所有标签都连上（后台标签才能报状态），切到后台时不销毁，也不参与尺寸计算。
 - `client/activity.ts` 后台标签的状态：运行中（转圈）、完成（强调色点）、等你确认（会呼吸的红点）。依据是 OSC 9;4 进度、通知（OSC 9/777/99、响铃）和输出节奏：持续输出算运行，停下 3 秒算结束，单次重绘（tmux 时钟）不算；结束后看屏幕末尾有没有各家 agent 的确认提示，来区分完成和等你。只在客户端做，不碰宿主。
 - `client/ime.ts` 输入法、语音输入、手机键盘这类经 textarea 进来的文字。xterm 自带的几条路径（组字结束、insertText、keydown 229 后的差分）在部分输入法下会把同一段话各发一次，所以全部拦下，只按 textarea 相对上次发送的增删发一次。例外是空格、大写字母、死键：xterm 在 keypress 里已经发出，浏览器随后写进 textarea 的同一个字只记下不再发；不要改成拦下 keypress 交给 textarea 发。组字预览也在这里，会换行。
@@ -52,6 +52,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 |---|---|
 | `GET /api/files` | 查询参数为 `account`、可选绝对 `path`、`offset` 和 `hidden=1`。省略路径时列出该系统用户的主目录，每页最多 160 项 |
 | `GET /api/files/download` | 查询参数为 `account`、目录 `path` 和文件 `name`。普通文件以二进制附件流返回 |
+| `GET /api/files/upload` | 只检查文件名是否已存在，查询参数为 `account`、目录 `path` 和 `name`。可用时返回 204，已存在时返回 409 |
 | `POST /api/files/upload` | 查询参数为 `account`、目录 `path`、文件 `name` 和字节数 `size`。请求体为原始文件数据，用户确认替换后加 `replace=1` |
 | `POST /api/files/folders` | JSON 请求体带 `account`、目录 `path` 和新目录 `name` |
 | `PATCH /api/files/item` | JSON 请求体带 `account`、目录 `path`、`name` 和新名称 `to` |

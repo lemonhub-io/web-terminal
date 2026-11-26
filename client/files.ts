@@ -17,15 +17,24 @@ interface Actions {
 type Edit = { kind: "create" } | { kind: "rename" | "delete"; entry: FileEntry };
 /** A signed-in account acting as one of its system users ("" for its own when it has just one). */
 type Target = { account: string; user: string };
+type UploadFile = { file: File; sent: number };
+type UploadIssue = { item: UploadFile; replace: boolean; error?: unknown };
+type ActiveUpload = { item: UploadFile; done: Promise<void> };
 type Upload = Target & {
-  files: File[];
+  files: UploadFile[];
   path: string;
-  index: number;
+  next: number;
   uploaded: number;
+  skipped: number;
+  sent: number;
+  totalBytes: number;
+  active: Map<string, ActiveUpload>;
+  issues: UploadIssue[];
   controller?: AbortController;
-  paused?: { kind: "conflict" } | { kind: "error"; replace: boolean };
 };
 
+const uploadConcurrency = 3;
+const checkUploadSize = 8 * 1024 * 1024;
 const date = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" });
 const number = new Intl.NumberFormat(language, { maximumFractionDigits: 1 });
 function formatSize(bytes: number) {
@@ -119,12 +128,16 @@ export function buildFilesPanel(actions: Actions) {
   const uploadMeter = h("div", { class: "file-upload-meter" }, progress, uploadBytes);
   const replaceFile = button(t("replaceFile"), () => void upload(true));
   const retryFile = button(t("retryUpload"), () => {
-    if (batch?.paused?.kind === "error") void upload(batch.paused.replace);
+    const issue = batch?.issues[0];
+    if (issue) void upload(issue.replace);
   });
   const skipFile = button(t("skipFile"), () => {
-    if (!batch?.paused) return;
-    batch.index++;
-    void upload(false);
+    if (!batch || batch.controller) return;
+    const issue = batch.issues.shift();
+    if (!issue) return;
+    batch.skipped++;
+    batch.totalBytes -= issue.item.file.size;
+    void upload();
   });
   const cancelUpload = button(t("cancelUpload"), () => {
     if (!batch) return;
@@ -287,33 +300,39 @@ export function buildFilesPanel(actions: Actions) {
 
   function startUpload(files: File[]) {
     if (!canUpload() || !files.length || !page) return;
-    batch = { files, account, user, path: page.path, index: 0, uploaded: 0 };
+    batch = {
+      files: files.map((file) => ({ file, sent: 0 })),
+      account, user, path: page.path, next: 0, uploaded: 0, skipped: 0, sent: 0,
+      totalBytes: files.reduce((total, file) => total + file.size, 0),
+      active: new Map(), issues: [],
+    };
     paint();
-    void upload(false);
+    void upload();
   }
 
-  function paintUpload(transfer: Upload, file: File) {
-    uploadBox.hidden = false;
-    uploadPosition.textContent = t("uploadPosition", { current: String(transfer.index + 1), total: String(transfer.files.length) });
-    uploadMeter.hidden = !!transfer.paused;
-    replaceFile.hidden = transfer.paused?.kind !== "conflict";
-    retryFile.hidden = transfer.paused?.kind !== "error";
-    skipFile.hidden = !transfer.paused;
-    cancelUpload.disabled = false;
-    if (transfer.paused) {
-      uploadLabel.textContent = t(transfer.paused.kind === "conflict" ? "replaceFileWarning" : "uploadFileFailed", { name: file.name });
-      return;
-    }
-    progress.max = file.size || 1;
-    updateProgress(file, 0);
-  }
-
-  function updateProgress(file: File, bytes: number) {
-    const sent = Math.min(bytes, file.size);
-    const text = t(sent < file.size ? "uploadingFile" : "finishingUpload", { name: file.name });
+  function paintProgress(transfer: Upload) {
+    const active = transfer.active.size;
+    const item = transfer.active.values().next().value?.item;
+    const text = active === 1 && item
+      ? t(item.sent < item.file.size ? "uploadingFile" : "finishingUpload", { name: item.file.name })
+      : t("uploadingFiles", { count: active });
     if (uploadLabel.textContent !== text) uploadLabel.textContent = text;
-    progress.value = file.size ? sent : 1;
-    uploadBytes.textContent = t("uploadBytes", { sent: formatSize(sent), total: formatSize(file.size) });
+    progress.max = transfer.totalBytes || 1;
+    progress.value = transfer.totalBytes ? transfer.sent : 0;
+    uploadBytes.textContent = t("uploadBytes", { sent: formatSize(transfer.sent), total: formatSize(transfer.totalBytes) });
+  }
+
+  function paintUpload(transfer: Upload) {
+    const issue = transfer.controller ? undefined : transfer.issues[0];
+    uploadBox.hidden = false;
+    uploadPosition.textContent = t("uploadCompleted", { done: transfer.uploaded + transfer.skipped, total: transfer.files.length });
+    uploadMeter.hidden = !!issue;
+    replaceFile.hidden = !issue || issue.error !== undefined;
+    retryFile.hidden = !issue || issue.error === undefined;
+    skipFile.hidden = !issue;
+    cancelUpload.disabled = transfer.controller?.signal.aborted ?? false;
+    if (!issue) paintProgress(transfer);
+    else uploadLabel.textContent = t(issue.error === undefined ? "replaceFileWarning" : "uploadFileFailed", { name: issue.item.file.name });
   }
 
   async function finishUpload(transfer: Upload, cancelled: boolean) {
@@ -326,45 +345,84 @@ export function buildFilesPanel(actions: Actions) {
     }));
   }
 
-  async function upload(replace: boolean) {
+  function startFile(transfer: Upload, item: UploadFile, replace: boolean, controller: AbortController, retry = false) {
+    const { file } = item;
+    const { signal } = controller;
+    const route = url("/upload", transfer.account, transfer.user, transfer.path, {
+      name: file.name, size: String(file.size), ...(replace && { replace: "1" }),
+    });
+    const done = (async () => {
+      try {
+        if (!replace && file.size >= checkUploadSize) {
+          const check = await fetch(`/api/${route}`, { cache: "no-store", signal }).catch(() => undefined);
+          if (check?.status === 409 || check?.status === 401) throw { status: check.status };
+        }
+        await sendFile(route, file, signal, (bytes) => {
+          if (signal.aborted) return;
+          const sent = Math.min(bytes, file.size);
+          transfer.sent += sent - item.sent;
+          item.sent = sent;
+          paintProgress(transfer);
+        });
+        transfer.sent += file.size - item.sent;
+        item.sent = file.size;
+        transfer.uploaded++;
+      } catch (error) {
+        if (signal.aborted) return;
+        const status = (error as { status?: number } | undefined)?.status;
+        if (status === 401) {
+          controller.abort();
+          actions.unauthorized();
+          return;
+        }
+        transfer.sent -= item.sent;
+        item.sent = 0;
+        const issue: UploadIssue = status === 409 && !replace
+          ? { item, replace }
+          : { item, replace, error: error ?? new Error(t("uploadFailed")) };
+        if (retry) transfer.issues.unshift(issue);
+        else transfer.issues.push(issue);
+      } finally {
+        transfer.active.delete(file.name);
+      }
+    })();
+    transfer.active.set(file.name, { item, done });
+    if (!disposed) paintUpload(transfer);
+    return done;
+  }
+
+  async function upload(replace?: boolean) {
     const transfer = batch;
     if (!transfer || transfer.controller) return;
     const controller = new AbortController();
     transfer.controller = controller;
-    transfer.paused = undefined;
     message("");
-    try {
-      while (transfer.index < transfer.files.length) {
-        const file = transfer.files[transfer.index]!;
-        paintUpload(transfer, file);
-        await sendFile(url("/upload", transfer.account, transfer.user, transfer.path, {
-          name: file.name, size: String(file.size), ...(replace && { replace: "1" }),
-        }), file, controller.signal, (bytes) => {
-          if (!controller.signal.aborted) updateProgress(file, bytes);
-        });
-        transfer.index++;
-        transfer.uploaded++;
-        replace = false;
-      }
-    } catch (error) {
-      if (disposed) return;
-      if (controller.signal.aborted) {
-        await finishUpload(transfer, true);
-        return;
-      }
-      const status = (error as { status?: number } | undefined)?.status;
-      if (status === 401) return actions.unauthorized();
-      if (status === 409 && !replace) transfer.paused = { kind: "conflict" };
-      else {
-        transfer.paused = { kind: "error", replace };
-        report(error);
-      }
-      paintUpload(transfer, transfer.files[transfer.index]!);
-      return;
-    } finally {
-      transfer.controller = undefined;
+    if (replace !== undefined) {
+      const issue = transfer.issues.shift();
+      if (issue) await startFile(transfer, issue.item, replace, controller, true);
     }
-    await finishUpload(transfer, false);
+    async function runQueue() {
+      while (!controller.signal.aborted && !transfer.issues.length && transfer.next < transfer.files.length) {
+        const item = transfer.files[transfer.next]!;
+        const previous = transfer.active.get(item.file.name);
+        if (previous) await previous.done;
+        else {
+          transfer.next++;
+          await startFile(transfer, item, false, controller);
+          if (!disposed && transfer.active.size) paintUpload(transfer);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: uploadConcurrency }, runQueue));
+    transfer.controller = undefined;
+    if (disposed) return;
+    if (controller.signal.aborted || !transfer.issues.length) {
+      await finishUpload(transfer, controller.signal.aborted);
+      return;
+    }
+    paintUpload(transfer);
+    const issue = transfer.issues[0]!;
+    if (issue.error !== undefined) report(issue.error);
   }
 
   function form(action: Edit) {
