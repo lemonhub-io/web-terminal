@@ -631,12 +631,17 @@ select {
   inset: 0;
   padding: 8px 2px 4px 12px;
   overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+.term,
+.term .xterm {
+  /* The virtual viewport pans in TouchScroll while two fingers can still zoom. */
+  touch-action: none;
+  touch-action: pinch-zoom;
 }
 
 .term .xterm {
-  /* The virtual viewport pans in TouchScroll while two fingers can still zoom. */
-  touch-action: pinch-zoom;
-  overscroll-behavior: contain;
   -webkit-touch-callout: none;
   isolation: isolate;
 }

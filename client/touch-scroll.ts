@@ -13,13 +13,13 @@ export class TouchScroll {
   private hold = 0;
   private selecting = false;
 
-  constructor(private readonly term: Terminal, private readonly selection: TouchSelection) {
+  constructor(private readonly term: Terminal, mount: HTMLElement, private readonly selection: TouchSelection) {
     this.element = term.element!;
     this.screen = this.element.querySelector<HTMLElement>(".xterm-screen")!;
     const { signal } = this.events;
-    this.element.addEventListener("touchstart", (event) => {
+    mount.addEventListener("touchstart", (event) => {
       this.stop();
-      if (event.touches.length !== 1 || (event.target instanceof Element && event.target.closest(".scrollbar"))) return;
+      if (event.touches.length !== 1 || (event.target instanceof Element && event.target.closest(".scrollbar, .touch-selection"))) return;
       const touch = event.touches[0]!;
       this.finger = { id: touch.identifier, x: touch.clientX, y: touch.clientY, lastY: touch.clientY, time: event.timeStamp, dragging: false };
       if (event.target instanceof Node && this.screen.contains(event.target)) {
@@ -33,8 +33,8 @@ export class TouchScroll {
         }
       }
     }, { passive: false, signal });
-    this.element.addEventListener("touchmove", (event) => this.move(event), { passive: false, signal });
-    this.element.addEventListener("touchend", (event) => {
+    mount.addEventListener("touchmove", (event) => this.move(event), { passive: false, signal });
+    mount.addEventListener("touchend", (event) => {
       const finger = this.finger;
       this.finger = null;
       window.clearTimeout(this.hold);
@@ -50,7 +50,7 @@ export class TouchScroll {
       event.preventDefault();
       if (event.timeStamp - finger.time < 100) this.coast(finger.x, finger.lastY);
     }, { passive: false, signal });
-    this.element.addEventListener("touchcancel", () => this.stop(), { signal });
+    mount.addEventListener("touchcancel", () => this.stop(), { signal });
     this.element.addEventListener("contextmenu", (event) => {
       if (this.selecting || (this.finger && !this.finger.dragging)) {
         event.preventDefault();
@@ -59,7 +59,7 @@ export class TouchScroll {
     }, { capture: true, signal });
     this.element.addEventListener("keydown", () => this.stop(), { signal });
     document.addEventListener("touchstart", (event) => {
-      if (event.target instanceof Node && !this.element.contains(event.target)) this.stop();
+      if (event.target instanceof Node && !mount.contains(event.target)) this.stop();
     }, { passive: true, signal });
     document.addEventListener("visibilitychange", () => this.stop(), { signal });
   }
@@ -99,7 +99,9 @@ export class TouchScroll {
     const lines = Math.trunc(this.remainder);
     if (!lines) return true;
     this.remainder -= lines;
-    if (this.term.modes.mouseTrackingMode === "none" && this.term.buffer.active.type === "normal") {
+    const mode = this.term.modes.mouseTrackingMode;
+    // X10 reports clicks only, so the normal buffer can still scroll locally.
+    if ((mode === "none" || mode === "x10") && this.term.buffer.active.type === "normal") {
       const before = this.term.buffer.active.viewportY;
       this.term.scrollLines(lines);
       return this.term.buffer.active.viewportY !== before;

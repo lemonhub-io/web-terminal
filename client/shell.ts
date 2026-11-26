@@ -151,7 +151,7 @@ export class Shell {
     term.open(this.mount);
     this.textSelection = new TextSelection(term, this.mount, IS_MAC);
     this.touchSelection = new TouchSelection(term, this.mount, () => host.selection(this));
-    this.touchScroll = new TouchScroll(term, this.touchSelection);
+    this.touchScroll = new TouchScroll(term, this.mount, this.touchSelection);
     term.onSelectionChange(() => host.selection(this));
     this.activity = new ActivityWatch(term, (state) => host.activity(this, state));
     this.startWebgl();
