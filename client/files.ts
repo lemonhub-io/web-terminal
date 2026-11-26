@@ -401,7 +401,7 @@ export function buildFilesPanel(actions: Actions) {
       const issue = transfer.issues.shift();
       if (issue) await startFile(transfer, issue.item, replace, controller, true);
     }
-    async function runQueue() {
+    const runQueue = async () => {
       while (!controller.signal.aborted && !transfer.issues.length && transfer.next < transfer.files.length) {
         const item = transfer.files[transfer.next]!;
         const previous = transfer.active.get(item.file.name);
@@ -412,7 +412,7 @@ export function buildFilesPanel(actions: Actions) {
           if (!disposed && transfer.active.size) paintUpload(transfer);
         }
       }
-    }
+    };
     await Promise.all(Array.from({ length: uploadConcurrency }, runQueue));
     transfer.controller = undefined;
     if (disposed) return;
